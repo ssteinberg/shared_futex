@@ -1,4 +1,4 @@
-// StE
+// shared_futex
 // © Shlomi Steinberg, 2015-2018
 
 #pragma once
@@ -14,7 +14,7 @@
 #include <functional>
 #include <random>
 #include <cassert>
-#include <intrin.h>
+#include <immintrin.h>
 
 namespace ste {
 

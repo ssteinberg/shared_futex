@@ -1,11 +1,11 @@
-// StE
+// shared_futex
 // © Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "shared_futex_common.hpp"
 
-#include <cstdint>
+#include <cstddef>
 #include <cmath>
 #include <chrono>
 #include <new>
@@ -38,6 +38,11 @@ struct shared_futex_default_storage_policy {
 	static constexpr std::size_t upgradeable_bits = 10;
 	// Bit depth for simultaneous exclusive lockers
 	static constexpr std::size_t exclusive_bits = 10;
+
+	// Latch data type
+	using latch_data_type = std::uint32_t;
+
+	static constexpr bool allow_parking = true;
 };
 
 
