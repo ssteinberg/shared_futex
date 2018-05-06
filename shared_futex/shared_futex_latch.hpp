@@ -4,8 +4,8 @@
 #pragma once
 
 #include "shared_futex_common.hpp"
-#include "parking_lot.hpp"
-#include "atomic_tsx.hpp"
+#include "../parking_lot/parking_lot.hpp"
+#include "../atomic/atomic_tsx.hpp"
 
 #include <cassert>
 #include <tuple>

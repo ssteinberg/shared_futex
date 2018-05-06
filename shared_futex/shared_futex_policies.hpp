@@ -4,11 +4,11 @@
 #pragma once
 
 #include "shared_futex_common.hpp"
-#include "parking_lot.hpp"
 
 #include <cstdint>
 #include <cmath>
 #include <chrono>
+#include <new>
 
 namespace ste {
 
