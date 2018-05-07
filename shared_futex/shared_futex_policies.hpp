@@ -10,6 +10,7 @@
 #include <chrono>
 #include <new>
 #include <tuple>
+#include <algorithm>
 
 namespace ste {
 
