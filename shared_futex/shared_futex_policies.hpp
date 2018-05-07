@@ -9,6 +9,7 @@
 #include <cmath>
 #include <chrono>
 #include <new>
+#include <tuple>
 
 namespace ste {
 
@@ -25,24 +26,33 @@ struct use_transactional_hle {};
 /*
  *	@brief	Policy of shared_futex's data storage
  */
-struct shared_futex_default_storage_policy {
+struct shared_futex_default_policy {
+	/*
+	 *	Locking variable storage policies
+	 */
+
 	// Futex alignment
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
-
-	/*
-	 *	Locking variable bit allocation
-	 */
-	// Bit depth for simultaneous shared lockers
-	static constexpr std::size_t shared_bits = 10;
-	// Bit depth for simultaneous upgradeable lockers
-	static constexpr std::size_t upgradeable_bits = 10;
-	// Bit depth for simultaneous exclusive lockers
-	static constexpr std::size_t exclusive_bits = 10;
-
 	// Latch data type
 	using latch_data_type = std::uint32_t;
 
-	static constexpr bool allow_parking = true;
+	// Bit depth for shared waiters counter
+	static constexpr std::size_t shared_bits = 10;
+	// Bit depth for upgradeable waiters counter
+	static constexpr std::size_t upgradeable_bits = 10;
+	// Bit depth for exclusive waiters counter
+	static constexpr std::size_t exclusive_bits = 10;
+
+	/*
+	 *	Futex behaviour policies
+	 */
+
+	// Specifies thread parking policy
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::parking_lot;
+	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
+	static constexpr bool count_waiters = true;
+	// List of requested featrues, see namespace shared_futex_features.
+	using features = std::tuple<>;
 };
 
 

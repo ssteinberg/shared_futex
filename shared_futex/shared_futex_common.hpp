@@ -9,9 +9,9 @@
 namespace ste::shared_futex_detail {
 
 // Enables per-thread statistics collection
-// #define STE_SHARED_FUTEX_COLLECT_STATISTICS
+#define STE_SHARED_FUTEX_COLLECT_STATISTICS
 // Enables additional asserts
-static constexpr bool debug_shared_futex = false;
+static constexpr bool debug_shared_futex = true;
 
 
 struct statistics {
@@ -106,3 +106,8 @@ struct backoff_return_t {
 };
 
 }
+
+enum class shared_futex_parking_policy {
+	none,
+	parking_lot,
+};
