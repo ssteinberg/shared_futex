@@ -1,14 +1,16 @@
-// StE
+// shared_futex
 // © Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "shared_futex_common.hpp"
 
-#include <cstdint>
+#include <cstddef>
 #include <cmath>
 #include <chrono>
 #include <new>
+#include <tuple>
+#include <algorithm>
 
 namespace ste {
 
@@ -17,27 +19,44 @@ namespace ste {
  */
 namespace shared_futex_features {
 
-// Allows the futex to employ x64 TSX hardware-lock-elision, if supported.
-struct use_transactional_hle {};
+// Allows the futex to employ x64 TSX hardware-lock-elision, if supported, for exclusive locks only.
+struct use_transactional_hle_exclusive {};
+// Allows the futex to employ x64 TSX restricted-transactional-memory. Exception will be raised if TSX is unsupported by hardware.
+// Consumers can abort a transaction manually by calling xabort.
+struct use_transactional_rtm {};
 
 }
 
 /*
  *	@brief	Policy of shared_futex's data storage
  */
-struct shared_futex_default_storage_policy {
+struct shared_futex_default_policy {
+	/*
+	 *	Locking variable storage policies
+	 */
+
 	// Futex alignment
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	// Latch data type
+	using latch_data_type = std::uint32_t;
+
+	// Bit depth for shared waiters counter
+	static constexpr std::size_t shared_bits = 10;
+	// Bit depth for upgradeable waiters counter
+	static constexpr std::size_t upgradeable_bits = 10;
+	// Bit depth for exclusive waiters counter
+	static constexpr std::size_t exclusive_bits = 10;
 
 	/*
-	 *	Locking variable bit allocation
+	 *	Futex behaviour policies
 	 */
-	// Bit depth for simultaneous shared lockers
-	static constexpr std::size_t shared_bits = 10;
-	// Bit depth for simultaneous upgradeable lockers
-	static constexpr std::size_t upgradeable_bits = 10;
-	// Bit depth for simultaneous exclusive lockers
-	static constexpr std::size_t exclusive_bits = 10;
+
+	// Specifies thread parking policy
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::parking_lot;
+	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
+	static constexpr bool count_waiters = true;
+	// List of requested featrues, see namespace shared_futex_features.
+	using features = std::tuple<>;
 };
 
 

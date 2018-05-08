@@ -1,4 +1,4 @@
-// StE
+// shared_futex
 // © Shlomi Steinberg, 2015-2018
 
 #pragma once
@@ -14,15 +14,15 @@
 #include <functional>
 #include <random>
 #include <cassert>
-#include <intrin.h>
+#include <immintrin.h>
 
 namespace ste {
 
-template <typename StoragePolicy, template <typename, typename...> class Latch, typename... Features>
+template <typename FutexPolicy, template <typename> class Latch>
 class shared_futex_t {
 public:
-	using storage_policy = StoragePolicy;
-	using latch_type = Latch<storage_policy, Features...>;
+	using futex_policy = FutexPolicy;
+	using latch_type = Latch<futex_policy>;
 
 private:
 	latch_type latch;
@@ -152,21 +152,23 @@ public:
 /*
  *	@brief	Back-off protocol
  */
-template <typename BackoffPolicy, typename LatchLock>
+template <typename BackoffPolicy, typename LatchLock, shared_futex_parking_policy parking_mode>
 struct shared_futex_backoff_protocol {
 	using backoff_result = shared_futex_detail::backoff_result;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
 	using backoff_operation = shared_futex_detail::backoff_operation;
 	using backoff_return_t = shared_futex_detail::backoff_return_t<LatchLock>;
+	
+	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
 
 	template <shared_futex_detail::modus_operandi mo, typename Latch, typename ParkPredicate, typename OnPark, typename ParkKey, typename Clock, typename Duration>
-	static backoff_return_t backoff(Latch &l,
-									backoff_aggressiveness aggressiveness,
-									ParkPredicate &&park_predicate,
-									OnPark &&on_park,
-									std::size_t iteration,
-									ParkKey &&park_key,
-									const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	static backoff_return_t pause(Latch &l,
+								  backoff_aggressiveness aggressiveness,
+								  ParkPredicate &&park_predicate,
+								  OnPark &&on_park,
+								  std::size_t iteration,
+								  ParkKey &&park_key,
+								  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Query the policy for backoff operation
 		const backoff_operation op = BackoffPolicy::template select_operation<mo>(iteration, aggressiveness, until);
 
@@ -179,20 +181,27 @@ struct shared_futex_backoff_protocol {
 			return { backoff_result::spin };
 		}
 
-		// Yield
-		if (op == backoff_operation::yield) {
-			std::this_thread::yield();
+		if constexpr (parking_allowed) {
+			// Yield
+			if (op == backoff_operation::yield) {
+				std::this_thread::yield();
 
-			return { backoff_result::spin };
+				return { backoff_result::spin };
+			}
+
+			// Park
+			if (op == backoff_operation::park) {
+				return wait_until(l,
+								  std::forward<ParkPredicate>(park_predicate),
+								  std::forward<OnPark>(on_park),
+								  std::forward<ParkKey>(park_key),
+								  until);
+			}
 		}
-
-		// Park
-		if (op == backoff_operation::park) {
-			return wait_until(l,
-							  std::forward<ParkPredicate>(park_predicate),
-							  std::forward<OnPark>(on_park),
-							  std::forward<ParkKey>(park_key),
-							  until);
+		else {
+			// Yield instead of parking if paking is disallowed
+			std::this_thread::yield();
+			return { backoff_result::spin };
 		}
 
 		// Timeout
@@ -206,6 +215,8 @@ private:
 									   OnPark &&on_park,
 									   ParkKey &&park_key,
 									   const std::chrono::time_point<Clock, Duration> &until) {
+		static_assert(parking_mode == shared_futex_parking_policy::parking_lot, "Unsupported parking mode");
+
 		// Park
 		auto park_result = l.parking.park_until(std::forward<ParkPredicate>(park_predicate),
 												std::forward<OnPark>(on_park),
@@ -243,6 +254,7 @@ private:
  */
 template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, shared_futex_detail::modus_operandi mo>
 class shared_futex_locking_protocol {
+	using futex_policy = typename Latch::futex_policy;
 	using latch_descriptor = typename Latch::latch_descriptor;
 	using waiters_descriptor = typename Latch::waiters_descriptor;
 	using counter_t = typename Latch::counter_t;
@@ -251,10 +263,10 @@ public:
 	using latch_lock_t = typename Latch::latch_lock;
 
 private:
-	using backoff_protocol_t = shared_futex_backoff_protocol<BackoffPolicy, latch_lock_t>;
-
 	// Pre-thread random generator
 	static thread_local shared_futex_detail::random_generator rand;
+	
+	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
 
 	// Helper values
 	enum class unpark_tactic { one, all, all_reserve };
@@ -263,6 +275,7 @@ private:
 	using modus_operandi = shared_futex_detail::modus_operandi;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
 	using acquisition_primality = shared_futex_detail::acquisition_primality;
+	using backoff_protocol = shared_futex_backoff_protocol<BackoffPolicy, latch_lock_t, parking_mode>;
 
 	struct park_slot_t {
 		typename Latch::parking_key_t key;
@@ -431,7 +444,7 @@ protected:
 	}
 
 	// Chooses a backoff protocol
-	backoff_aggressiveness backoff_protocol(Latch &l) const noexcept {
+	backoff_aggressiveness select_backoff_protocol(Latch &l) const noexcept {
 		// Calculate relevant waiters count
 		std::size_t waiters;
 		{
@@ -509,7 +522,7 @@ protected:
 								 latch_lock_t &&lock_to_upgrade = {}) noexcept {
 		// Wait and Choose backoff agressiveness protocol
 		l.template wait<mo>();
-		auto aggressiveness = backoff_protocol(l);
+		auto aggressiveness = select_backoff_protocol(l);
 
 		for (std::size_t iteration = 1;; ++iteration) {
 			if constexpr (shared_futex_detail::collect_statistics)
@@ -528,13 +541,13 @@ protected:
 					++shared_futex_detail::debug_statistics.lock_parks;
 			};
 			// Execute back-off policy
-			auto backoff_result = backoff_protocol_t::template backoff<mo>(l,
-																		   aggressiveness,
-																		   park_predicate,
-																		   on_park,
-																		   iteration,
-																		   backoff_parking_slot().key,
-																		   until);
+			auto backoff_result = backoff_protocol::template pause<mo>(l,
+																	   aggressiveness,
+																	   park_predicate,
+																	   on_park,
+																	   iteration,
+																	   backoff_parking_slot().key,
+																	   until);
 			/*		Possible backoff results:
 			 *	Timed-out - If we can't take lock we revert state and return failure result.
 			 *	Park predicate triggered - Parking failed due to park predicate.
@@ -598,7 +611,7 @@ protected:
 			
 			// Choose a new backoff aggressiveness protocol every few iterations.
 			if (iteration % ProtocolPolicy::refresh_backoff_protocol_every_iterations == 0)
-				aggressiveness = backoff_protocol(l);
+				aggressiveness = select_backoff_protocol(l);
 		}
 	}
 
@@ -678,10 +691,8 @@ thread_local shared_futex_detail::random_generator shared_futex_locking_protocol
 
 /*
  *	@brief	Shared, upgradeable futex.
- *	@param	RequestedFeatures	List of latch features (see shared_futex_features namespace) that are requested.
  */
-template <typename... RequestedFeatures>
-using shared_futex = shared_futex_t<shared_futex_default_storage_policy, shared_futex_default_latch, RequestedFeatures...>;
+using shared_futex = shared_futex_t<shared_futex_default_policy, shared_futex_default_latch>;
 
 /*
  *	@brief	Locks the futex in shared mode and returns a lock_guard.
