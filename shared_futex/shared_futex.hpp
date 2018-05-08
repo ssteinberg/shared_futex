@@ -162,13 +162,13 @@ struct shared_futex_backoff_protocol {
 	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
 
 	template <shared_futex_detail::modus_operandi mo, typename Latch, typename ParkPredicate, typename OnPark, typename ParkKey, typename Clock, typename Duration>
-	static backoff_return_t backoff(Latch &l,
-									backoff_aggressiveness aggressiveness,
-									ParkPredicate &&park_predicate,
-									OnPark &&on_park,
-									std::size_t iteration,
-									ParkKey &&park_key,
-									const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	static backoff_return_t pause(Latch &l,
+								  backoff_aggressiveness aggressiveness,
+								  ParkPredicate &&park_predicate,
+								  OnPark &&on_park,
+								  std::size_t iteration,
+								  ParkKey &&park_key,
+								  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Query the policy for backoff operation
 		const backoff_operation op = BackoffPolicy::template select_operation<mo>(iteration, aggressiveness, until);
 
@@ -541,13 +541,13 @@ protected:
 					++shared_futex_detail::debug_statistics.lock_parks;
 			};
 			// Execute back-off policy
-			auto backoff_result = backoff_protocol::template backoff<mo>(l,
-																		 aggressiveness,
-																		 park_predicate,
-																		 on_park,
-																		 iteration,
-																		 backoff_parking_slot().key,
-																		 until);
+			auto backoff_result = backoff_protocol::template pause<mo>(l,
+																	   aggressiveness,
+																	   park_predicate,
+																	   on_park,
+																	   iteration,
+																	   backoff_parking_slot().key,
+																	   until);
 			/*		Possible backoff results:
 			 *	Timed-out - If we can't take lock we revert state and return failure result.
 			 *	Park predicate triggered - Parking failed due to park predicate.

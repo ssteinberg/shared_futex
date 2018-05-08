@@ -19,8 +19,11 @@ namespace ste {
  */
 namespace shared_futex_features {
 
-// Allows the futex to employ x64 TSX hardware-lock-elision, if supported.
-struct use_transactional_hle {};
+// Allows the futex to employ x64 TSX hardware-lock-elision, if supported, for exclusive locks only.
+struct use_transactional_hle_exclusive {};
+// Allows the futex to employ x64 TSX restricted-transactional-memory. Exception will be raised if TSX is unsupported by hardware.
+// Consumers can abort a transaction manually by calling xabort.
+struct use_transactional_rtm {};
 
 }
 

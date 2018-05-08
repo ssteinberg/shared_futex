@@ -51,7 +51,10 @@ class shared_futex_default_latch {
 public:
 	using futex_policy = FutexPolicy;
 	// Our list of supported features
-	using supported_features = std::tuple<shared_futex_features::use_transactional_hle>;
+	using supported_features = std::tuple<
+		shared_futex_features::use_transactional_hle_exclusive,
+		shared_futex_features::use_transactional_rtm
+	>;
 	
 private:
 	static_assert(shared_futex_detail::features_helper::check_supports_all<supported_features>(futex_policy::features{}), 
@@ -65,7 +68,10 @@ private:
 
 public:
 	// Requested features
-	static constexpr bool transactional = requires_feature<shared_futex_features::use_transactional_hle>();	// Using transactional HLE
+	static constexpr bool tsx_hle_exclusive = requires_feature<shared_futex_features::use_transactional_hle_exclusive>();	// Using transactional HLE
+	static constexpr bool tsx_rtm = requires_feature<shared_futex_features::use_transactional_rtm>();	// Using transactional RTM
+
+	static_assert(!tsx_hle_exclusive || !tsx_rtm, "TSX HLE and RTM cannot be used simultaneously");
 
 private:
 	using modus_operandi = shared_futex_detail::modus_operandi;
@@ -199,6 +205,7 @@ public:
 		// Counts number of active consumers
 		template <modus_operandi mo>
 		auto consumers() const noexcept {
+			static constexpr auto exclusively_held = static_cast<latch_data_type>(1) << lock_held_bit_index;
 			switch (mo) {
 			case modus_operandi::shared_lock:
 				return shared_consumers;
@@ -207,7 +214,7 @@ public:
 			case modus_operandi::exclusive_lock:
 			case modus_operandi::upgrade_to_exclusive_lock:
 				// Exclusively owned iff lock is held and no shared consumers are in flight.
-				return lock_held_flag_bit && !upgradeable_consumers && !shared_consumers ? 
+				return static_cast<latch_data_type>(*this) == exclusively_held ? 
 					static_cast<counter_t>(1) : 
 					static_cast<counter_t>(0);
 			default:
@@ -370,60 +377,48 @@ private:
 
 	// Acquires lock in transactional mode
 	[[nodiscard]] latch_lock acquire_internal_transactional() noexcept {
-		static constexpr auto max_tsx_retries_on_capacity_abort = 3;
-		static constexpr auto max_tsx_retries_on_retry_abort = 3;
-		static constexpr auto max_tsx_retries_on_sys_abort = 2;
+		static constexpr auto max_tsx_retries = 3;
 		
 		if constexpr (shared_futex_detail::collect_statistics)
 			++shared_futex_detail::debug_statistics.transactional_lock_elision_attempts;
 
+		transactional_memory::status tsx_start;
+		const auto tsx_start_has_flag = [&](const transactional_memory::status f) {
+			return (tsx_start & f) != static_cast<transactional_memory::status>(0);
+		};
+		
 		// Attempt a transactions, and retry up to a fixed number of tries depending on returned abort code.
-		unsigned tsx_start;
 		for (auto i=0;; ++i) {
-			tsx_start = _xbegin();
-			if (tsx_start == _XABORT_CAPACITY && i < max_tsx_retries_on_capacity_abort)
-				continue;
-			if (tsx_start == _XABORT_RETRY && i < max_tsx_retries_on_retry_abort)
-				continue;
-			if (tsx_start == 0 && i < max_tsx_retries_on_sys_abort)
+			tsx_start = transactional_memory::transaction_begin().first;
+
+			const auto should_retry = tsx_start_has_flag(transactional_memory::status::abort_retry);
+			if (should_retry && i < max_tsx_retries)
 				continue;
 			break;
 		}
-		if (tsx_start == _XBEGIN_STARTED)
+		if (tsx_start == transactional_memory::status::started)
 			return { lock_status::transaction };
 					  
 		// Transaction failed.
 
 		if constexpr (shared_futex_detail::collect_statistics) {
 			// Log transaction failure
-			switch (tsx_start) {
-			case 0:
-				// Return code of 0 indicates an abort due to system call, a serializing instruction, touching unmapped pages or other obscure
-				// reasons. See https://software.intel.com/en-us/forums/intel-moderncode-for-parallel-architectures/topic/658265
+			if (tsx_start_has_flag(transactional_memory::status::abort_system))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_sys;
-				break;
-			case _XABORT_CAPACITY:
+			if (tsx_start_has_flag(transactional_memory::status::abort_capacity))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_capacity;
-				break;
-			case _XABORT_CONFLICT:
+			if (tsx_start_has_flag(transactional_memory::status::abort_conflict))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_conflict;
-				break;
-			case _XABORT_DEBUG:
+			if (tsx_start_has_flag(transactional_memory::status::abort_debug))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_debug;
-				break;
-			case _XABORT_EXPLICIT:
+			if (tsx_start_has_flag(transactional_memory::status::abort_explicit))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_explicit;
-				break;
-			case _XABORT_NESTED:
+			if (tsx_start_has_flag(transactional_memory::status::abort_nested))
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_nested;
-				break;
-			case _XABORT_RETRY:
+			if (tsx_start == transactional_memory::status::abort_retry)
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_too_many_retries;
-				break;
-			default:
+			if (tsx_start == transactional_memory::status::abort_unknown)
 				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_other;
-				break;
-			}
 		}
 
 		return {};
@@ -436,7 +431,7 @@ private:
 	[[nodiscard]] latch_lock acquire_internal(Validator &&validator, memory_order order) noexcept {
 		// If transactional is enabled we attempt a lock-elision only if this is an initial acquisition attempt and skip_transactional flag is 
 		// unset.
-		if constexpr (transactional && primality == shared_futex_detail::acquisition_primality::initial &&
+		if constexpr (tsx_rtm && primality == shared_futex_detail::acquisition_primality::initial &&
 					  (flags & internal_acquisition_flags::skip_transactional) == internal_acquisition_flags::none) {
 			auto lock = acquire_internal_transactional();
 			if (lock)
@@ -468,9 +463,6 @@ private:
 				if (storage.latch.compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order))
 					return { lock_status::acquired };
 			}
-
-			// Failed
-			return {};
 		}
 		else /*(method == latch_acquisition_method::set_flag)*/ {
 			if constexpr (shared_futex_detail::collect_statistics)
@@ -478,10 +470,19 @@ private:
 
 			// Bit-test-and-set
 			const auto bit = latch_descriptor::lock_held_bit_index;
-			if (!storage.latch.bit_test_and_set(bit, order))
-				return { lock_status::acquired };
-			return {};
+			if constexpr (tsx_hle_exclusive && primality == shared_futex_detail::acquisition_primality::initial) {
+				// xacquire for transactional hardware-lock-elision
+				if (!storage.latch.bit_test_and_set(bit, memory_order::xacquire))
+					return { lock_status::transaction };
+			}
+			else {
+				if (!storage.latch.bit_test_and_set(bit, order))
+					return { lock_status::acquired };
+			}
 		}
+
+		// Failed
+		return {};
 	}
 
 	// Releases the latch in transactional mode
@@ -502,7 +503,7 @@ private:
 	// Releases the latch
 	template <modus_operandi mo>
 	void release_internal(lock_status mode, memory_order order) noexcept {
-		if constexpr (transactional) {
+		if constexpr (tsx_rtm) {
 			// If we can release the latch in transactional mode, then we return an empty latch
 			if (release_internal_transactional(mode))
 				return;
@@ -550,6 +551,14 @@ private:
 			} while (!storage.latch.compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order));
 		}
 		else /*(method == latch_acquisition_method::set_flag)*/ {
+			if constexpr (tsx_hle_exclusive) {
+				// xrelease
+				if (mode == lock_status::transaction) {
+					storage.latch.store(static_cast<latch_data_type>(desired_latch), memory_order::xrelease);
+					return;
+				}
+			}
+			// Atomic store
 			storage.latch.store(static_cast<latch_data_type>(desired_latch), store_mo);
 		}
 	}
@@ -617,7 +626,7 @@ public:
 	[[nodiscard]] latch_lock upgrade(latch_lock &&lock, Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
 		static constexpr modus_operandi mo = modus_operandi::upgrade_to_exclusive_lock;
 
-		if constexpr (transactional) {
+		if constexpr (tsx_rtm) {
 			// If we are in a pending transaction treat the upgrade as part of the transaction, so that and in case of an abort, we will be 
 			// reverted all the way back to upgradeable acquisition.
 			if (lock.mode == lock_status::transaction) {

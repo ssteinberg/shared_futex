@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <immintrin.h>
+#include <future>
 
 namespace ste {
 
@@ -53,6 +54,8 @@ struct memory_order_helper {
 #define __ATOMIC_STX_FORCE_INLINE attribute((always_inline))
 #elif defined(_MSC_VER)
 #define __ATOMIC_STX_FORCE_INLINE __forceinline
+#else
+#define __ATOMIC_STX_FORCE_INLINE inline
 #endif
 
 /*
@@ -553,6 +556,93 @@ public:
 		return !!(fetch_and(~mask) & mask);
 	}
 };
+
+
+// Transactional memory
+namespace transactional_memory {
+
+using abort_code = std::uint8_t;
+enum class status : std::uint8_t {
+	started = 0,
+	abort_explicit = 1 << 0,
+	abort_retry = 1 << 1,
+	abort_conflict = 1 << 2,
+	abort_capacity = 1 << 3,
+	abort_debug = 1 << 4,
+	abort_nested = 1 << 5,
+	abort_system = 1 << 6,
+	abort_unknown = 1 << 7,
+};
+constexpr status operator|(const status &lhs, const status &rhs) noexcept {
+	using T = std::underlying_type_t<status>;
+	return static_cast<status>(static_cast<T>(lhs) | static_cast<T>(rhs));
+}
+constexpr status operator&(const status &lhs, const status &rhs) noexcept {
+	using T = std::underlying_type_t<status>;
+	return static_cast<status>(static_cast<T>(lhs) & static_cast<T>(rhs));
+}
+
+/*
+ *	@brief	Starts a transaction. 
+ *	@return	A pair of transaction status and abort code. Abort code is relevant only if status::abort_explicit is set.
+ */
+static __ATOMIC_STX_FORCE_INLINE std::pair<status, abort_code> transaction_begin() noexcept {
+	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
+
+	// Begin transaction
+	const auto begin = _xbegin();
+	if (begin == _XBEGIN_STARTED)
+		return { status::started, 0 };
+
+	// Check abort status
+	auto ret = static_cast<status>(0);
+	if (begin == 0) {
+		// Return code of 0 indicates an abort due to system call, a serializing instruction, touching unmapped pages or other obscure
+		// reasons. See https://software.intel.com/en-us/forums/intel-moderncode-for-parallel-architectures/topic/658265
+		ret = ret | status::abort_system;
+	}
+	if (begin & _XABORT_CAPACITY)
+		ret = ret | status::abort_capacity;
+	if (begin & _XABORT_CONFLICT)
+		ret = ret | status::abort_conflict;
+	if (begin & _XABORT_DEBUG)
+		ret = ret | status::abort_debug;
+	if (begin & _XABORT_EXPLICIT)
+		ret = ret | status::abort_explicit;
+	if (begin & _XABORT_NESTED)
+		ret = ret | status::abort_nested;
+	if (begin & _XABORT_RETRY)
+		ret = ret | status::abort_retry;
+	if (ret == static_cast<status>(0))
+		ret = status::abort_unknown;
+
+	return { ret, static_cast<abort_code>(_XABORT_CODE(begin)) };
+}
+/*
+ *	@brief	Aborts the transaction with a specified abort code
+ */
+template <abort_code code>
+static __ATOMIC_STX_FORCE_INLINE void transaction_abort() noexcept {
+	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
+	_xabort(static_cast<unsigned int>(code));
+}
+/*
+ *	@brief	Ends the transaction
+ */
+static __ATOMIC_STX_FORCE_INLINE void transaction_end() noexcept {
+	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
+	_xend();
+}
+/*
+ *	@brief	Checks if a transaction is currently active
+ */
+static __ATOMIC_STX_FORCE_INLINE bool transaction_active() noexcept {
+	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
+	return _xtest() != 0;
+}
+
+}
+
 
 #undef __ATOMIC_STX_FORCE_INLINE
 
