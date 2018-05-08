@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "../utils/spinner.hpp"
+
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
@@ -10,7 +12,6 @@
 #include <type_traits>
 #include <functional>
 #include <optional>
-#include <intrin.h>
 #include <cassert>
 
 namespace ste {
@@ -26,34 +27,12 @@ enum class parking_lot_wait_state {
 
 namespace parking_lot_detail {
 
-class simple_spinner {
-	std::atomic_flag f = ATOMIC_FLAG_INIT;
-
-public:
-	void lock() noexcept {
-		if (!f.test_and_set())
-			return;
-
-		// Spin
-		static constexpr int spins_on_last_iteration = 64;
-		static constexpr int max_spin_iterations = 16;
-		for (auto i=0; f.test_and_set(); ++i) {
-			const auto spins = spins_on_last_iteration * std::min(i, max_spin_iterations) / max_spin_iterations;
-			for (auto j=0; j<spins; ++j)
-			::_mm_pause();
-		}
-	}
-	void unlock() noexcept {
-		f.clear();
-	}
-};
-
 class parking_lot_node_base {
 public:
 	static constexpr std::size_t key_size = 8;
 
 private:
-	using mutex_t = simple_spinner;
+	using mutex_t = utils::spinner<>;
 
 	mutex_t m;
 	std::condition_variable_any cv;
@@ -185,7 +164,7 @@ class parking_lot_slot {
 	static constexpr auto alignment = std::hardware_destructive_interference_size;
 
 public:
-	using mutex_t = simple_spinner;
+	using mutex_t = utils::spinner<>;
 	alignas(alignment) mutex_t m;
 
 	// Simple intrusive dlist
