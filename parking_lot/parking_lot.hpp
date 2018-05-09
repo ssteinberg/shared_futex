@@ -262,7 +262,7 @@ private:
 
 public:
 	/*
-	 *  @brief	If on_park returns true, parks the calling thread in the specified key indefinitely.
+	 *  @brief	If park_predicate returns true, parks the calling thread in the specified key indefinitely.
 	 */
 	template <typename K, typename ParkPredicate, typename OnPark>
 	park_return_t park(ParkPredicate &&park_predicate,
@@ -274,7 +274,7 @@ public:
 						  std::chrono::steady_clock::time_point::max());
 	}
 	/*
-	 *	@brief	If on_park returns true, parks the calling thread in the specified slot until the timeout has expired 
+	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
 	*/
 	template <typename K, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>

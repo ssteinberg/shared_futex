@@ -108,6 +108,10 @@ struct backoff_return_t {
 }
 
 enum class shared_futex_parking_policy {
+	// Disallow parking
 	none,
+	// Use system shared parking lot
 	parking_lot,
+	// Use thread local parking slots
+	local
 };

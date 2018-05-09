@@ -4,7 +4,7 @@
 #pragma once
 
 #include "shared_futex_common.hpp"
-#include "../parking_lot/parking_lot.hpp"
+#include "shared_futex_parking.hpp"
 #include "../atomic/atomic_tsx.hpp"
 #include "../utils/tuple_has_type.hpp"
 
@@ -335,7 +335,7 @@ private:
 
 public:
 	// Parking lot for smart wakeup
-	parking_lot<latch_lock> parking;
+	shared_futex_detail::shared_futex_parking<futex_policy::parking_policy, latch_lock> parking_lot;
 
 private:
 	// Specifies the initial state the latch is assumed to be at.
