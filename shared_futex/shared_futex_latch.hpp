@@ -5,6 +5,7 @@
 
 #include "shared_futex_common.hpp"
 #include "shared_futex_parking.hpp"
+#include "shared_futex_latch_descriptors.hpp"
 #include "../atomic/atomic_tsx.hpp"
 #include "../utils/tuple_has_type.hpp"
 
@@ -105,6 +106,8 @@ private:
 	// If we neither allow parking nor count waiter we can dispense with the waiters counter.
 	static constexpr bool has_waiters_counter = count_waiters || parking_allowed;
 
+	static constexpr bool count_shared_parked = true;// futex_policy::parking_policy != shared_futex_parking_policy::shared_local;
+
 public:
 	// Represents a latch lock. A valid object holds a lock and should be released by consuming the object with a call to latch's release().
 	class latch_lock {
@@ -133,195 +136,26 @@ public:
 
 	using latch_data_type = std::make_signed_t<typename futex_policy::latch_data_type>;
 	using waiters_counter_type = std::int64_t;
-	using counter_t = std::make_unsigned_t<latch_data_type>;
-	
-	using parking_lot_t = shared_futex_detail::shared_futex_parking<futex_policy::parking_policy>;
-
-	static constexpr auto alignment = std::max(futex_policy::alignment, alignof(std::max_align_t));
-	static constexpr auto shared_consumers_bits = sizeof(latch_data_type) * 8 - 4;
-
-	static_assert(shared_consumers_bits >= futex_policy::shared_bits, "Shared consumers bit count can not satisfy requested shared_bits bit count.");
-
-	class latch_descriptor {
-		friend class shared_futex_default_latch;
-		
-		static constexpr auto lock_held_bit_index = 0;
-		
-		counter_t lock_held_flag_bit		: 1;
-		counter_t upgradeable_consumers		: 1;
-		counter_t _unused					: 2;
-		counter_t shared_consumers			: shared_consumers_bits;
-		
-		explicit latch_descriptor(const latch_data_type &l) { *this = *reinterpret_cast<const latch_descriptor*>(&l); }
-		explicit operator latch_data_type() const {
-			latch_data_type t = {};
-			*reinterpret_cast<latch_descriptor*>(&t) = *this;
-			return t;
-		}
-
-		// Accessors and helpers
-
-		template <modus_operandi mo>
-		void inc_consumers(const counter_t &count) noexcept {
-			switch (mo) {
-			case modus_operandi::shared_lock:
-				shared_consumers += count;
-				break;
-			case modus_operandi::upgradeable_lock:
-				upgradeable_consumers += count;
-			default:
-				if constexpr (shared_futex_detail::debug_shared_futex)
-					assert(count <= 1);
-			}
-		}
-		
-		void set_lock_held_flag() noexcept { lock_held_flag_bit = true; }
-
-		// Returns a dummy latch value with a single consumer
-		template <modus_operandi mo>
-		static latch_descriptor make_single_consumer() noexcept {
-			latch_descriptor d = {};
-			d.template inc_consumers<mo>(1);
-			return d;
-		}
-		// Returns a dummy latch value with lock held by a single consumer
-		template <modus_operandi mo>
-		static latch_descriptor make_locked() noexcept {
-			latch_descriptor d = {};
-			d.set_lock_held_flag();
-			d.template inc_consumers<mo>(1);
-			return d;
-		}
-		static latch_descriptor make_exclusive_locked() noexcept {
-			latch_descriptor d = {};
-			d.set_lock_held_flag();
-			return d;
-		}
-
-	public:
-		latch_descriptor() = default;
-		bool operator==(const latch_descriptor &rhs) const noexcept {
-			return static_cast<latch_data_type>(*this) == static_cast<latch_data_type>(rhs);
-		}
-		bool operator!=(const latch_descriptor &rhs) const noexcept { return !(*this == rhs); }
-
-		// Counts number of active consumers
-		template <modus_operandi mo>
-		auto consumers() const noexcept {
-			static constexpr auto exclusively_held = static_cast<latch_data_type>(1) << lock_held_bit_index;
-			switch (mo) {
-			case modus_operandi::shared_lock:
-				return shared_consumers;
-			case modus_operandi::upgradeable_lock:
-				return upgradeable_consumers;
-			case modus_operandi::exclusive_lock:
-			case modus_operandi::upgrade_to_exclusive_lock:
-				// Exclusively owned iff lock is held and no shared consumers are in flight.
-				return static_cast<latch_data_type>(*this) == exclusively_held ? 
-					static_cast<counter_t>(1) : 
-					static_cast<counter_t>(0);
-			default:
-				return counter_t{};
-			}
-		}
-	};
-	class waiters_descriptor {
-		friend class shared_futex_default_latch;
-		
-		// Parked counters
-		counter_t shared_parked					: futex_policy::shared_bits;
-		counter_t upgradeable_parked			: futex_policy::upgradeable_bits;
-		counter_t exclusive_parked				: futex_policy::exclusive_bits;
-		counter_t upgrading_to_exclusive_parked : 1;
-		// Waiter counters
-		counter_t upgradeable_waiters			: futex_policy::upgradeable_bits;
-		counter_t exclusive_waiters				: futex_policy::exclusive_bits;
-
-		explicit waiters_descriptor(const waiters_counter_type &l) { *this = *reinterpret_cast<const waiters_descriptor*>(&l); }
-		explicit operator waiters_counter_type() const {
-			waiters_counter_type c = {};
-			*reinterpret_cast<waiters_descriptor*>(&c) = *this;
-			return c;
-		}
-
-		// Accessors and helpers
-
-		template <modus_operandi mo>
-		void inc_parked(const counter_t &count) noexcept {
-			switch (mo) {
-			case modus_operandi::shared_lock:
-				shared_parked += count;
-				break;
-			case modus_operandi::upgradeable_lock:
-				upgradeable_parked += count;
-				break;
-			case modus_operandi::exclusive_lock:
-				exclusive_parked += count;
-				break;
-			case modus_operandi::upgrade_to_exclusive_lock:
-				upgrading_to_exclusive_parked += count;
-				break;
-			default:{}
-			}
-		}
-		template <modus_operandi mo>
-		void inc_waiters(const counter_t &count) noexcept {
-			static_assert(mo == modus_operandi::upgradeable_lock || mo == modus_operandi::exclusive_lock);
-			switch (mo) {
-			case modus_operandi::upgradeable_lock:
-				upgradeable_waiters += count;
-				break;
-			case modus_operandi::exclusive_lock:
-				exclusive_waiters += count;
-				break;
-			}
-		}
-
-	public:
-		waiters_descriptor() = default;
-		bool operator==(const waiters_descriptor &rhs) const noexcept {
-			return static_cast<waiters_counter_type>(*this) == static_cast<waiters_counter_type>(rhs);
-		}
-		bool operator!=(const waiters_descriptor &rhs) const noexcept { return !(*this == rhs); }
-
-		// Counts number of parked consumers
-		template <modus_operandi mo>
-		auto parked() const noexcept {
-			switch (mo) {
-			case modus_operandi::shared_lock:
-				return shared_parked;
-			case modus_operandi::upgradeable_lock:
-				return upgradeable_parked;
-			case modus_operandi::exclusive_lock:
-				return exclusive_parked;
-			case modus_operandi::upgrade_to_exclusive_lock:
-			default:
-				return upgrading_to_exclusive_parked;
-			}
-		}
-		// Counts number of waiting consumers
-		template <modus_operandi mo>
-		auto waiters() const noexcept {
-			static_assert(mo == modus_operandi::upgradeable_lock || mo == modus_operandi::exclusive_lock);
-			switch (mo) {
-			case modus_operandi::upgradeable_lock:
-				return upgradeable_waiters;
-			case modus_operandi::exclusive_lock:
-				return exclusive_waiters;
-			default:
-				return counter_t{};
-			}
-		}
-	};
-
 	using parking_key_t = std::uint64_t;
+	
+	using latch_descriptor = shared_futex_detail::latch_descriptor<latch_data_type, futex_policy::parking_policy>;
+	using waiters_descriptor = shared_futex_detail::waiters_descriptor<
+		waiters_counter_type,
+		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
+		count_shared_parked, count_waiters
+	>;
+	using parking_lot_t = shared_futex_detail::shared_futex_parking<futex_policy::parking_policy>;
+	
+	static constexpr auto alignment = std::max(futex_policy::alignment, alignof(std::max_align_t));
 
 private:
 	using latch_atomic_t = atomic_tsx<latch_data_type>;
 	using waiters_atomic_t = atomic_tsx<waiters_counter_type>;
 
-	static_assert(sizeof(latch_descriptor) <= sizeof(latch_data_type), "Total bits count should take no more than the latch size");
-	static_assert(sizeof(waiters_descriptor) <= sizeof(waiters_counter_type), "Total bits count should take no more than the waiters counter size");
+	static_assert(sizeof(latch_descriptor) <= sizeof(latch_data_type), "latch_data_type too small to contain latch_descriptor");
+	static_assert(sizeof(waiters_descriptor) <= sizeof(waiters_counter_type), "waiters_counter_type too small to contain waiters_descriptor");
+	static_assert(latch_descriptor::shared_consumers_bits >= futex_policy::shared_bits, "Shared consumers bit count can not satisfy requested shared_bits bit count.");
+	
 	static_assert(latch_atomic_t::is_always_lock_free, "Latch is not lock-free!");
 	static_assert(waiters_atomic_t::is_always_lock_free, "Latch waiter counter is not lock-free!");
 
@@ -382,14 +216,7 @@ private:
 	static constexpr bool should_count_parked() noexcept {
 		if constexpr (!parking_allowed)
 			return false;
-
-		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot)
-			return true;
-		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local && 
-					  mo == modus_operandi::shared_lock)
-			return true;
-
-		return false;
+		return true;
 	}
 
 	// Generates a unique parking key for parking_lot parkings
@@ -675,24 +502,23 @@ public:
 	parking_lot_wait_state park(ParkPredicate &&park_predicate,
 								OnPark &&on_park,
 								const std::chrono::time_point<Clock, Duration> &until) noexcept {
-		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot) {
+		if constexpr (shared_futex_detail::debug_shared_futex)
+			assert(parking_allowed && "Parking not allowed");
+
+		if constexpr (mo == modus_operandi::shared_lock &&
+					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
+			// Park shared in local slot
+			return parking_lot.template park_until<mo>(std::forward<ParkPredicate>(park_predicate),
+													   std::forward<OnPark>(on_park),
+													   until);
+		}
+		else {
 			// Wait
 			auto key = parking_lot_parking_key<mo>();
 			return parking_lot.template park_until<mo>(std::forward<ParkPredicate>(park_predicate),
 													   std::forward<OnPark>(on_park),
 													   std::move(key),
 													   until);
-		}
-		else /*if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local)*/ {
-			if constexpr (mo == modus_operandi::shared_lock) {
-				// Park shared in global slot
-				return parking_lot.template park_until<mo>(std::forward<ParkPredicate>(park_predicate),
-														   std::forward<OnPark>(on_park),
-														   until);
-			}
-			else {
-				return parking_lot_wait_state::signaled;
-			}
 		}
 	}
 	
@@ -703,20 +529,17 @@ public:
 	 */
 	template <unpark_tactic tactic, modus_operandi mo>
 	std::size_t unpark() noexcept {
-		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot) {
+		if constexpr (shared_futex_detail::debug_shared_futex)
+			assert(parking_allowed && "Parking not allowed");
+
+		if constexpr (mo == modus_operandi::shared_lock &&
+					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
+			return parking_lot.template unpark<tactic, mo>();
+		}
+		else {
 			// Generate parking key and attempt unpark
 			auto unpark_key = parking_lot_parking_key<mo>();
-			const std::size_t unparked = parking_lot.template unpark<tactic, mo>(std::move(unpark_key));
-
-			return unparked;
-		}
-		else /*if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local)*/ {
-			if constexpr (mo == modus_operandi::shared_lock) {
-				return parking_lot.template unpark<tactic, mo>();
-			}
-			else {
-				return 0;
-			}
+			return parking_lot.template unpark<tactic, mo>(std::move(unpark_key));
 		}
 	}
 
@@ -771,12 +594,11 @@ public:
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor d = {};
 			waiters_counter_type bits = 0;
-
 			if constexpr (should_count_parked<mo>()) {
-				d.template inc_parked<mo>(1);
-				bits += static_cast<waiters_counter_type>(d);
+				waiters_descriptor dp = {};
+				dp.template inc_parked<mo>(1);
+				bits += static_cast<waiters_counter_type>(dp);
 			}
 			if constexpr (should_count_waiters<mo>()) {
 				// Remove wait bit
@@ -798,12 +620,11 @@ public:
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor d = {};
 			waiters_counter_type bits = 0;
-
 			if constexpr (should_count_parked<mo>()) {
-				d.template inc_parked<mo>(1);
-				bits -= static_cast<waiters_counter_type>(d);
+				waiters_descriptor dp = {};
+				dp.template inc_parked<mo>(1);
+				bits -= static_cast<waiters_counter_type>(dp);
 			}
 			if constexpr (should_count_waiters<mo>()) {
 				// Add wait bit
@@ -817,7 +638,7 @@ public:
 	}
 	// Unregister parked thread(s)
 	template <modus_operandi mo>
-	void register_unpark(counter_t count = 1, memory_order order = memory_order::release) noexcept {
+	void register_unpark(std::size_t count = 1, memory_order order = memory_order::release) noexcept {
 		if constexpr (shared_futex_detail::debug_shared_futex) {
 			assert(parking_allowed && "Parking not allowed");
 			assert(count && "Count must be positive");

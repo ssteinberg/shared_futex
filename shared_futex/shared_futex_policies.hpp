@@ -52,7 +52,7 @@ struct shared_futex_default_policy {
 	 */
 
 	// Specifies thread parking policy
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::local;
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
 	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
 	static constexpr bool count_waiters = true;
 	// List of requested featrues, see namespace shared_futex_features.

@@ -111,6 +111,7 @@ enum class shared_futex_parking_policy {
 	none,
 	// Use system shared parking lot
 	parking_lot,
-	// Use thread local parking slots
-	local
+	// Use a local parking slot for shared and a system shared parking lot
+	// Trades latch memory for better performance during mixed contention workloads
+	shared_local
 };

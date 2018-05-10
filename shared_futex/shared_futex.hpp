@@ -286,7 +286,6 @@ class shared_futex_locking_protocol {
 	using futex_policy = typename Latch::futex_policy;
 	using latch_descriptor = typename Latch::latch_descriptor;
 	using waiters_descriptor = typename Latch::waiters_descriptor;
-	using counter_t = typename Latch::counter_t;
 
 public:
 	using latch_lock_t = typename Latch::latch_lock;
@@ -352,7 +351,7 @@ protected:
 		if constexpr (backoff_protocol::template is_unparker_responsible_for_unregistration<mo_to_unpark>()) {
 			// Unregister unparked threads from parked counters
 			if (unparked)
-				l.template register_unpark<mo_to_unpark>(static_cast<counter_t>(unparked));
+				l.template register_unpark<mo_to_unpark>(unparked);
 		}
 
 		if constexpr (shared_futex_detail::collect_statistics)
@@ -438,14 +437,9 @@ protected:
 
 			// For shared lockers, we do not care about upgradeable waiters, they do not block us.
 			if constexpr (mo == modus_operandi::shared_lock)
-				// waiters = x;
-				return backoff_aggressiveness::normal;
+				waiters = x;
 			else
-				return backoff_aggressiveness::aggressive;
-				// waiters = x + u;
-
-			if constexpr (mo == modus_operandi::exclusive_lock)
-				waiters += l.load(memory_order::relaxed).template consumers<modus_operandi::shared_lock>();
+				waiters = x + u;
 		}
 
 		// Calculate probabilities (normalized to waiters count)
