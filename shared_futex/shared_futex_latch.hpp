@@ -75,6 +75,7 @@ public:
 
 private:
 	using modus_operandi = shared_futex_detail::modus_operandi;
+	using unpark_tactic = shared_futex_detail::unpark_tactic;
 	enum class latch_acquisition_method : std::uint8_t {
 		set_flag, 
 		cxhg, 
@@ -133,6 +134,8 @@ public:
 	using latch_data_type = std::make_signed_t<typename futex_policy::latch_data_type>;
 	using waiters_counter_type = std::int64_t;
 	using counter_t = std::make_unsigned_t<latch_data_type>;
+	
+	using parking_lot_t = shared_futex_detail::shared_futex_parking<futex_policy::parking_policy>;
 
 	static constexpr auto alignment = std::max(futex_policy::alignment, alignof(std::max_align_t));
 	static constexpr auto shared_consumers_bits = sizeof(latch_data_type) * 8 - 4;
@@ -335,7 +338,7 @@ private:
 
 public:
 	// Parking lot for smart wakeup
-	shared_futex_detail::shared_futex_parking<futex_policy::parking_policy, latch_lock> parking_lot;
+	parking_lot_t parking_lot;
 
 private:
 	// Specifies the initial state the latch is assumed to be at.
@@ -366,13 +369,33 @@ private:
 			return latch_acquisition_method::cxhg;
 		}
 	}
-	// Returns true if latch should count waiters for a given mo
+	// Returns true if latch should count active waiters for a given mo
 	template <modus_operandi mo>
 	static constexpr bool should_count_waiters() noexcept {
 		if constexpr (count_waiters)
 			return mo == modus_operandi::exclusive_lock || mo == modus_operandi::upgradeable_lock;
 		else
 			return false;
+	}
+	// Returns true if latch should count parked waiters for a given mo
+	template <modus_operandi mo>
+	static constexpr bool should_count_parked() noexcept {
+		if constexpr (!parking_allowed)
+			return false;
+
+		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot)
+			return true;
+		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local && 
+					  mo == modus_operandi::shared_lock)
+			return true;
+
+		return false;
+	}
+
+	// Generates a unique parking key for parking_lot parkings
+	template <modus_operandi mo>
+	static parking_key_t parking_lot_parking_key() noexcept {
+		return static_cast<uint64_t>(mo);
 	}
 
 	// Acquires lock in transactional mode
@@ -644,6 +667,48 @@ public:
 	}
 
 	/*
+	 *	@brief	Attempts unparking of threads of a specified mo using a given unpark tactic.
+	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
+	 *	@return	Count of threads successfully unparked
+	 */
+	template <modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	parking_lot_wait_state park(ParkPredicate &&park_predicate,
+								OnPark &&on_park,
+								const std::chrono::time_point<Clock, Duration> &until) noexcept {
+		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot) {
+			// Wait
+			auto key = parking_lot_parking_key<mo>();
+			return parking_lot.template park_until<mo>(std::forward<ParkPredicate>(park_predicate),
+													   std::forward<OnPark>(on_park),
+													   std::move(key),
+													   until);
+		}
+		else if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local) {
+		}
+	}
+	
+	/*
+	 *	@brief	Attempts unparking of threads of a specified mo using a given unpark tactic.
+	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
+	 *	@return	Count of threads successfully unparked
+	 */
+	template <unpark_tactic tactic, modus_operandi mo>
+	std::size_t unpark() noexcept {
+		if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::parking_lot) {
+			// Generate parking key and attempt unpark
+			auto unpark_key = parking_lot_parking_key<mo>();
+			const std::size_t unparked = parking_lot.template unpark<tactic, mo>(std::move(unpark_key));
+
+			return unparked;
+		}
+		else if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local) {
+		}
+
+		// If we can't unpark, or don't know how many were unparked, return 0.
+		return 0;
+	}
+
+	/*
 	 *	@brief	Releases the latch, consuming a lock in the process.
 	 *	
 	 *	@param	lock	lock, acquired via a call to acquire() or upgrade(), to consume.
@@ -657,16 +722,10 @@ public:
 		release_internal<mo>(lock.mode, order);
 		std::move(lock).reset();
 	}
-
-	// Generates a unique parking key
-	template <modus_operandi mo>
-	static parking_key_t parking_key() noexcept {
-		return static_cast<uint64_t>(mo);
-	}
 	
 	// Registers as active waiter
 	template <modus_operandi mo>
-	void wait(memory_order order = memory_order::release) noexcept {
+	void register_wait(memory_order order = memory_order::release) noexcept {
 		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
@@ -679,7 +738,7 @@ public:
 	}
 	// Unregisters as active waiter
 	template <modus_operandi mo>
-	void unwait(memory_order order = memory_order::release) noexcept {
+	void register_unwait(memory_order order = memory_order::release) noexcept {
 		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
@@ -692,18 +751,21 @@ public:
 	}
 	// Registers parked thread
 	template <modus_operandi mo>
-	void unwait_and_park(memory_order order = memory_order::release) noexcept {
+	void register_unwait_and_park(memory_order order = memory_order::release) noexcept {
 		if constexpr (shared_futex_detail::debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 		
-		if constexpr (has_waiters_counter) {
+		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
-			d.template inc_parked<mo>(1);
-			auto bits = static_cast<waiters_counter_type>(d);
-			
+			waiters_counter_type bits = 0;
+
+			if constexpr (should_count_parked<mo>()) {
+				d.template inc_parked<mo>(1);
+				bits += static_cast<waiters_counter_type>(d);
+			}
 			if constexpr (should_count_waiters<mo>()) {
 				// Remove wait bit
 				waiters_descriptor dw = {};
@@ -716,18 +778,21 @@ public:
 	}
 	// Unregister parked and register as waiter
 	template <modus_operandi mo>
-	void unpark_and_wait(memory_order order = memory_order::release) noexcept {
+	void register_unpark_and_wait(memory_order order = memory_order::release) noexcept {
 		if constexpr (shared_futex_detail::debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
-
-		if constexpr (has_waiters_counter) {
+		
+		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
-			d.template inc_parked<mo>(1);
-			auto bits = -static_cast<waiters_counter_type>(d);
-			
+			waiters_counter_type bits = 0;
+
+			if constexpr (should_count_parked<mo>()) {
+				d.template inc_parked<mo>(1);
+				bits -= static_cast<waiters_counter_type>(d);
+			}
 			if constexpr (should_count_waiters<mo>()) {
 				// Add wait bit
 				waiters_descriptor dw = {};
@@ -740,13 +805,13 @@ public:
 	}
 	// Unregister parked thread(s)
 	template <modus_operandi mo>
-	void unpark(counter_t count = 1, memory_order order = memory_order::release) noexcept {
+	void register_unpark(counter_t count = 1, memory_order order = memory_order::release) noexcept {
 		if constexpr (shared_futex_detail::debug_shared_futex) {
 			assert(parking_allowed && "Parking not allowed");
 			assert(count && "Count must be positive");
 		}
 		
-		if constexpr (has_waiters_counter) {
+		if constexpr (should_count_parked<mo>()) {
 			if constexpr (shared_futex_detail::collect_statistics)
 				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 

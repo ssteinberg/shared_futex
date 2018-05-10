@@ -218,7 +218,7 @@ public:
 
 }
 
-template <typename NodeData>
+template <typename NodeData = void>
 class parking_lot {
 	using node_t = parking_lot_detail::parking_lot_node<NodeData>;
 	using park_return_t = std::conditional_t<

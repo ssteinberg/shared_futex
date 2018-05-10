@@ -184,9 +184,6 @@ struct shared_futex_protocol_policy {
 
 	// Each count of those iterations we re-choose the backoff protocol
 	static constexpr auto refresh_backoff_protocol_every_iterations = 1;
-
-	// When unparking shared waiters, use a reserve-and-unpark tactic if shared parked count is greater or equal to this threshold
-	static constexpr auto shared_parked_count_threshold_for_reserve_and_unpark = 2;
 	
 	// When looking for candidates to unpark, we unpark a waiter if count of active waiters, that might block said waiter, is lower than 
 	// this threshold.

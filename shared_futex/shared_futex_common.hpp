@@ -81,6 +81,7 @@ enum class backoff_operation : std::uint8_t {
 
 enum class backoff_result : std::uint8_t {
 	unparked,
+	unparked_and_unregistered,
 	park_predicate_triggered,
 	timeout,
 	spin,
@@ -92,17 +93,15 @@ enum class backoff_aggressiveness : std::uint8_t {
 	relaxed,
 	very_relaxed,
 };
+
 enum class acquisition_primality : std::uint8_t {
 	initial, 
 	waiter,
 };
 
-template <typename Lock>
-struct backoff_return_t {
-	// Backoff result
-	backoff_result result{};
-	// In case of unpark, an optional lock that was reserved for the parked waiter by the unparker.
-	Lock reserved_lock{};
+enum class unpark_tactic : std::uint8_t {
+	one,
+	all,
 };
 
 }
