@@ -438,9 +438,11 @@ protected:
 
 			// For shared lockers, we do not care about upgradeable waiters, they do not block us.
 			if constexpr (mo == modus_operandi::shared_lock)
-				waiters = x;
+				// waiters = x;
+				return backoff_aggressiveness::normal;
 			else
-				waiters = x + u;
+				return backoff_aggressiveness::aggressive;
+				// waiters = x + u;
 
 			if constexpr (mo == modus_operandi::exclusive_lock)
 				waiters += l.load(memory_order::relaxed).template consumers<modus_operandi::shared_lock>();

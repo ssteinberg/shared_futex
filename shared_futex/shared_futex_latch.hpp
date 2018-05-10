@@ -120,13 +120,13 @@ public:
 		latch_lock(latch_lock &&o) noexcept : mode(std::exchange(o.mode, lock_status::not_acquired)) {}
 		latch_lock(const latch_lock&) = delete;
 		latch_lock &operator=(latch_lock &&o) noexcept {
-			assert(mode == latch_acquisition_mode::not_acquired);
+			assert(mode == lock_status::not_acquired);
 
 			mode = std::exchange(o.mode, lock_status::not_acquired);
 			return *this;
 		}
 		latch_lock &operator=(const latch_lock&) = delete;
-		~latch_lock() noexcept { assert(mode == latch_acquisition_mode::not_acquired); }
+		~latch_lock() noexcept { assert(mode == lock_status::not_acquired); }
 
 		explicit operator bool() const noexcept { return mode != lock_status::not_acquired; }
 	};
@@ -683,7 +683,16 @@ public:
 													   std::move(key),
 													   until);
 		}
-		else if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local) {
+		else /*if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local)*/ {
+			if constexpr (mo == modus_operandi::shared_lock) {
+				// Park shared in global slot
+				return parking_lot.template park_until<mo>(std::forward<ParkPredicate>(park_predicate),
+														   std::forward<OnPark>(on_park),
+														   until);
+			}
+			else {
+				return parking_lot_wait_state::signaled;
+			}
 		}
 	}
 	
@@ -701,11 +710,14 @@ public:
 
 			return unparked;
 		}
-		else if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local) {
+		else /*if constexpr (futex_policy::parking_policy == shared_futex_parking_policy::local)*/ {
+			if constexpr (mo == modus_operandi::shared_lock) {
+				return parking_lot.template unpark<tactic, mo>();
+			}
+			else {
+				return 0;
+			}
 		}
-
-		// If we can't unpark, or don't know how many were unparked, return 0.
-		return 0;
 	}
 
 	/*

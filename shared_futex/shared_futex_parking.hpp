@@ -36,7 +36,7 @@ public:
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
 									  ParkSlot &&park_slot,
-									  const std::chrono::time_point<Clock, Duration> &until) {
+									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		return parking.park_until(std::forward<ParkPredicate>(park_predicate),
 								  std::forward<OnPark>(on_park),
 								  std::forward<ParkSlot>(park_slot),
@@ -75,11 +75,11 @@ public:
 
 private:
 	template <typename ParkPredicate, typename OnPark, typename CondVar, typename Mutex, typename Clock, typename Duration>
-	parking_lot_wait_state wait(ParkPredicate &&park_predicate,
-								OnPark &&on_park,
-								CondVar &cond_var,
-								Mutex &m,
-								const std::chrono::time_point<Clock, Duration> &until) {
+	static parking_lot_wait_state wait(ParkPredicate &&park_predicate,
+									   OnPark &&on_park,
+									   CondVar &cond_var,
+									   Mutex &m,
+									   const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		on_park();
 
 		std::unique_lock<Mutex> ul(m);
@@ -122,17 +122,17 @@ public:
 		modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration,
 		typename = std::enable_if_t<mo != modus_operandi::shared_lock>
 	>
-	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
-									  OnPark &&on_park,
-									  parking_slot_t &park_slot,
-									  const std::chrono::time_point<Clock, Duration> &until) {
+	static parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
+											 OnPark &&on_park,
+											 parking_slot_t &park_slot,
+											 const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		return wait(std::forward<ParkPredicate>(park_predicate),
 					std::forward<OnPark>(on_park),
 					park_slot.cond_var,
 					park_slot.lock,
 					until);
 	}
-	
+
 	/*
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
@@ -142,7 +142,7 @@ public:
 	>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
-									  const std::chrono::time_point<Clock, Duration> &until) {
+									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		return wait(std::forward<ParkPredicate>(park_predicate),
 					std::forward<OnPark>(on_park),
 					shared_cond_var,
@@ -154,28 +154,49 @@ public:
 	 *	@brief	Unparks threads of a specified mo.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <unpark_tactic tactic, modus_operandi mo>
-	std::size_t unpark(parking_slot_t &slot) noexcept {
-		if constexpr (mo == modus_operandi::shared_lock) {
-			using shared_cond_var_t = std::decay_t<decltype(shared_cond_var)>;
-			using shared_cond_var_lock_t = std::decay_t<decltype(shared_cond_var_lock)>;
-			
-			// Choose function for given unpark tactic
-			const auto unparking_function = tactic == unpark_tactic::all ?
-				&shared_cond_var_t::notify_all :
-				&shared_cond_var_t::notify_one;
+	template <
+		unpark_tactic tactic, modus_operandi mo,
+		typename = std::enable_if_t<mo == modus_operandi::shared_lock>
+	>
+	std::size_t unpark() noexcept {
+		using shared_cond_var_t = std::decay_t<decltype(shared_cond_var)>;
+		using shared_cond_var_lock_t = std::decay_t<decltype(shared_cond_var_lock)>;
+		
+		// Choose function for given unpark tactic
+		const auto unparking_function = tactic == unpark_tactic::all ?
+			&shared_cond_var_t::notify_all :
+			&shared_cond_var_t::notify_one;
 
-			{
-				// Attempt unpark
-				std::unique_lock<shared_cond_var_lock_t> ul(shared_cond_var_lock);
-				std::invoke(unparking_function, shared_cond_var);
-			}
-			// Unknown unpark count
-			return 0;
+		{
+			// Attempt unpark
+			std::unique_lock<shared_cond_var_lock_t> ul(shared_cond_var_lock);
+			std::invoke(unparking_function, shared_cond_var);
 		}
-		else {
-			
+
+		// Unknown unpark count
+		return 0;
+	}
+	
+	/*
+	 *	@brief	Unparks threads of a specified mo.
+	 *	@return	Count of threads successfully unparked
+	 */
+	template <
+		unpark_tactic tactic, modus_operandi mo,
+		typename = std::enable_if_t<mo != modus_operandi::shared_lock>
+	>
+	static std::size_t unpark(parking_slot_t &slot) noexcept {
+		static_assert(tactic == unpark_tactic::one, "Only 'unpark one' tactic is supported");
+		
+		using cond_var_lock_t = std::decay_t<decltype(slot.lock)>;
+		
+		{
+			// Attempt unpark
+			std::unique_lock<cond_var_lock_t> ul(slot.lock);
+			slot.cond_var.notify_one();
 		}
+
+		return 1;
 	}
 };
 
