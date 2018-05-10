@@ -92,43 +92,79 @@ public:
 		std::swap(a.locker, b.locker);
 	}
 	void swap(lock_guard &o) noexcept { swap(*this, o); }
-
+	
+	/*
+	 *	@brief	Acquires lock. Blocks until lock acquisition is successful.
+	 */
 	void lock() noexcept {
 		try_lock_until(std::chrono::steady_clock::time_point::max());
 	}
-
+	
+	/*
+	 *	@brief	Attempts a lock acquisition.
+	 *	@return	True on success, false on failure.
+	 */
 	bool try_lock() noexcept {
-		assert(l);
+		assert(l && !owns_lock());
 		return locker.try_lock(l->data());
 	}
-
+	
+	/*
+	 *	@brief	Attempts lock acquisition and blocks until lock is acquired or until timeout duration (optional) has elapsed.
+	 *			Will always succeed if duration is std::chrono::duration::max().
+	 *			
+	 *	@param	duration	Timeout duration. Ignored if equals std::chrono::duration::max().
+	 *	
+	 *	@return	True on success, false on timeout.
+	 */
 	template <typename Rep, typename Period>
 	bool try_lock_for(const std::chrono::duration<Rep, Period> &duration) noexcept {
 		const auto until = std::chrono::steady_clock::now() + duration;
 		return try_lock_until(until);
 	}
-
+	
+	/*
+	 *	@brief	Attempts lock acquisition and blocks until lock is acquired or a specified timeout time (optional) has been reached.
+	 *			Will always succeed if time_point is std::chrono::time_point::max().
+	 *			
+	 *	@param	time_point	Timeout time point. Ignored if equals std::chrono::time_point::max().
+	 *	
+	 *	@return	True on success, false on timeout.
+	 */
 	template <typename Clock, typename Duration>
 	bool try_lock_until(const std::chrono::time_point<Clock, Duration> &time_point) noexcept {
-		assert(l);
+		assert(l && !owns_lock());
 		return locker.try_lock_until(l->data(), time_point);
 	}
-
+	
+	/*
+	 *	@brief	Releases the lock.
+	 */
 	void unlock() noexcept {
-		assert(l);
+		assert(l && owns_lock());
 		locker.unlock(l->data());
 	}
-
+	
 	SharedFutex &mutex() noexcept { return *l; }
 	const SharedFutex &mutex() const noexcept { return *l; }
-
+	
+	/*
+	 *	@brief	Releases ownership of the lock.
+	 *	@return	Lock object
+	 */
 	[[nodiscard]] auto&& drop() && noexcept {
 		l = nullptr;
 
 		return std::move(locker).drop();
 	}
-
+	
+	/*
+	 *	@brief	Checks if lock_guard has successfully acquired the lock.
+	 */
 	bool owns_lock() const noexcept { return l && locker.owns_lock(); }
+	/*
+	 *	@brief	True if lock_guard has successfully acquired the lock.
+	 */
 	operator bool() const noexcept { return owns_lock(); }
 };
 
@@ -278,9 +314,7 @@ private:
 	latch_lock_t lock;
 
 protected:
-	/*
-	*	@brief	Checks if a latch value is valid for lock acquisition
-	*/
+	// Checks if a latch value is valid for lock acquisition
 	template <acquisition_primality primality, modus_operandi mo_to_check = mo>
 	static bool can_acquire_lock(const latch_descriptor &latch_value) noexcept {
 		const auto exclusive_holders = latch_value.template consumers<modus_operandi::exclusive_lock>();
@@ -309,11 +343,10 @@ protected:
 		}
 	}
 
-	/*
-	 *	@brief	Unparks thread(s) using given unpark tactic
-	 */
+	// Unparks thread(s) using given unpark tactic
 	template <unpark_tactic tactic, modus_operandi mo_to_unpark>
 	static std::size_t unpark(Latch &l) noexcept {
+		// Unpark
 		const auto unparked = l.template unpark<tactic, mo_to_unpark>();
 
 		if constexpr (backoff_protocol::template is_unparker_responsible_for_unregistration<mo_to_unpark>()) {
@@ -328,9 +361,7 @@ protected:
 		return unparked;
 	}
 	
-	/*
-	 *	@brief	Handles unparking of shared and upgradeable parked waiters.
-	 */
+	// Handles unparking of shared and upgradeable parked waiters.
 	static std::size_t unpark_shared_if_needed(Latch &l, const latch_descriptor &latch_value, const waiters_descriptor &waiters_value) noexcept {
 		// Check if shared can even be unparked
 		const auto exclusive_waiters = waiters_value.template waiters<modus_operandi::exclusive_lock>();
@@ -465,8 +496,11 @@ protected:
 		}
 	}
 
-	// Protocol waiting logic
-	// For upgrades (modus_operandi::upgrade_to_exclusive_lock), lock_to_consume must be provided.
+	/*
+	 *	@brief	Periodically reattempts to acquire lock and exceutes backoff policy. Protocol waiting logic is implemented here.
+	 *	
+	 *			For upgrades (modus_operandi::upgrade_to_exclusive_lock), lock_to_upgrade must be provided.
+	 */
 	template <typename Clock, typename Duration>
 	bool wait_and_try_lock_until(Latch &l, const std::chrono::time_point<Clock, Duration> &until,
 								 latch_lock_t &&lock_to_upgrade = {}) noexcept {
@@ -552,20 +586,34 @@ protected:
 	}
 
 public:
-	// Attempts a single lock acquisition, returns true on success, false on failure.
+	/*
+	 *	@brief	Attempts a lock acquisition.
+	 *	@return	True on success, false on failure.
+	 */
 	template <modus_operandi lock_mo = mo, typename = std::enable_if_t<lock_mo != modus_operandi::upgrade_to_exclusive_lock>>
 	bool try_lock(Latch &l) noexcept {
 		// Attempt lock/upgrade
 		return acquire<acquisition_primality::initial>(l);
 	}
-	// Attempts a single lock acquisition, returns true on success, false on failure.
+	/*
+	 *	@brief	Attempts a lock upgrade. In case of success lock_to_consume is consumed and an upgraded (exclusive) lock is acquired, 
+	 *			otherwise lock_to_consume is untouched.
+	 *	@param	lock_to_consume		Must be a valid upgradeable lock
+	 *	
+	 *	@return	True on success, false on failure.
+	 */
 	template <modus_operandi lock_mo = mo, typename = std::enable_if_t<lock_mo == modus_operandi::upgrade_to_exclusive_lock>>
 	bool try_lock(Latch &l, latch_lock_t &&lock_to_consume) noexcept {
 		// Attempt lock/upgrade
 		return acquire<acquisition_primality::initial>(l, std::move(lock_to_consume));
 	}
 	
-	// Attempts lock acquisition with an optional timeout.
+	/*
+	 *	@brief	Attempts lock acquisition and blocks until lock is acquired or a specified timeout time (optional) has been reached.
+	 *			Will always succeed if until is std::chrono::time_point::max().
+	 *	
+	 *	@return	True on success, false on timeout.
+	 */
 	template <
 		typename Clock, typename Duration,
 		modus_operandi lock_mo = mo, typename = std::enable_if_t<lock_mo != modus_operandi::upgrade_to_exclusive_lock>
@@ -577,7 +625,14 @@ public:
 
 		return wait_and_try_lock_until(l, until);
 	}
-	// Attempts lock acquisition with an optional timeout.
+	/*
+	 *	@brief	Attempts lock upgrade and blocks until lock is acquired or a specified timeout time (optional) has been reached. In case 
+	 *			of success lock_to_consume is consumed and an upgraded (exclusive) lock is acquired, otherwise lock_to_consume is untouched.
+	 *			Will always succeed if until is std::chrono::time_point::max().
+	 *	@param	lock_to_consume		Must be a valid upgradeable lock
+	 *	
+	 *	@return	True on success, false on timeout.
+	 */
 	template <
 		typename Clock, typename Duration,
 		modus_operandi lock_mo = mo, typename = std::enable_if_t<lock_mo == modus_operandi::upgrade_to_exclusive_lock>
@@ -591,12 +646,17 @@ public:
 		return wait_and_try_lock_until(l, until, std::move(lock_to_consume));
 	}
 
-	// Releases the lock
+	/*
+	 *	@brief	Releases the lock.
+	 */
 	void unlock(Latch &l) noexcept {
 		assert(owns_lock());
 		release<release_reason::lock_release>(l);
 	}
-
+	
+	/*
+	 *	@brief	Checks if we hold lock.
+	 */
 	bool owns_lock() const noexcept { return !!lock; }
 
 public:
