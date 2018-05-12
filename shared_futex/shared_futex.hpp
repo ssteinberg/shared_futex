@@ -297,7 +297,7 @@ private:
 	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
 
 	// Helper values
-	enum class release_reason { failure, lock_release, reservation_release };
+	enum class release_reason { failure, lock_release };
 	using unpark_tactic = shared_futex_detail::unpark_tactic;
 	using modus_operandi = shared_futex_detail::modus_operandi;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
@@ -363,9 +363,7 @@ protected:
 	// Handles unparking of shared and upgradeable parked waiters.
 	static std::size_t unpark_shared_if_needed(Latch &l, const latch_descriptor &latch_value, const waiters_descriptor &waiters_value) noexcept {
 		// Check if shared can even be unparked
-		const auto exclusive_waiters = waiters_value.template waiters<modus_operandi::exclusive_lock>();
-		if (exclusive_waiters > 0 ||
-			!can_acquire_lock<acquisition_primality::waiter, modus_operandi::shared_lock>(latch_value))
+		if (!can_acquire_lock<acquisition_primality::waiter, modus_operandi::shared_lock>(latch_value))
 			return 0;
 
 		std::size_t unparked = 0;
@@ -407,40 +405,46 @@ protected:
 				}
 			}
 		}
-
-		// ... an exclusive waiter
-		const auto exclusive_waiters = waiters_value.template waiters<modus_operandi::exclusive_lock>();
-		if (exclusive_waiters < ProtocolPolicy::active_waiters_count_thershold_for_unpark) {
-			if (can_acquire_lock<acquisition_primality::waiter, modus_operandi::exclusive_lock>(latch_value)) {
-				const auto exclusive_parked = waiters_value.template parked<modus_operandi::exclusive_lock>();
-
-				if (exclusive_parked > 0) {
-					const auto unparked = unpark<unpark_tactic::one, modus_operandi::exclusive_lock>(l);
-					if (unparked)
-						return unparked;
-				}
-			}
+		
+		if constexpr (unparker_mo != modus_operandi::shared_lock) {
+			// Avoid unparking exclusive or upgradeable waiters if there are enough exclusive/upgradeable waiters.
+			const auto x = waiters_value.template waiters<modus_operandi::exclusive_lock>();
+			const auto u = waiters_value.template waiters<modus_operandi::upgradeable_lock>();
+			if (x + u > ProtocolPolicy::active_waiters_count_thershold_for_unpark)
+				return 0;
 		}
 
 		// ... and all shared waiters
-		return unpark_shared_if_needed(l, latch_value, waiters_value);
+		if constexpr (unparker_mo != modus_operandi::shared_lock) {
+			const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
+			if (unparked)
+				return unparked;
+		}
+		
+		// ... an exclusive waiter	
+		if (can_acquire_lock<acquisition_primality::waiter, modus_operandi::exclusive_lock>(latch_value)) {
+			const auto exclusive_parked = waiters_value.template parked<modus_operandi::exclusive_lock>();
+
+			if (exclusive_parked > 0) {
+				const auto unparked = unpark<unpark_tactic::one, modus_operandi::exclusive_lock>(l);
+				if (unparked)
+					return unparked;
+			}
+		}
+
+		return 0;
 	}
 
 	// Chooses a backoff protocol
 	backoff_aggressiveness select_backoff_protocol(Latch &l) const noexcept {
-		// Calculate relevant waiters count
-		std::size_t waiters;
-		{
-			const auto waiters_value = l.load_waiters_counters(memory_order::relaxed);
-			const auto x = waiters_value.template waiters<modus_operandi::exclusive_lock>();
-			const auto u = waiters_value.template waiters<modus_operandi::upgradeable_lock>();
+		if constexpr (mo == modus_operandi::shared_lock)
+			return backoff_aggressiveness::relaxed;
 
-			// For shared lockers, we do not care about upgradeable waiters, they do not block us.
-			if constexpr (mo == modus_operandi::shared_lock)
-				waiters = x;
-			else
-				waiters = x + u;
-		}
+		// Calculate relevant waiters count
+		const auto waiters_value = l.load_waiters_counters(memory_order::relaxed);
+		const auto x = waiters_value.template waiters<modus_operandi::exclusive_lock>();
+		const auto u = waiters_value.template waiters<modus_operandi::upgradeable_lock>();
+		const std::size_t waiters = x + u;
 
 		// Calculate probabilities (normalized to waiters count)
 		const auto probability_aggressive = static_cast<float>(ProtocolPolicy::desired_aggressive_waiters_count);
@@ -448,15 +452,15 @@ protected:
 		const auto probability_relaxed = static_cast<float>(ProtocolPolicy::desired_relaxed_waiters_count);
 
 		// Generate a random number and choose protocol
-		const auto x = rand() * static_cast<float>(waiters);
+		const auto r = rand() * static_cast<float>(waiters);
 		if (ProtocolPolicy::desired_aggressive_waiters_count > 0 &&
-			x < probability_aggressive)
+			r < probability_aggressive)
 			return backoff_aggressiveness::aggressive;
 		if (ProtocolPolicy::desired_normal_waiters_count > 0 &&
-			x < probability_aggressive + probability_normal)
+			r < probability_aggressive + probability_normal)
 			return backoff_aggressiveness::normal;
 		if (ProtocolPolicy::desired_relaxed_waiters_count > 0 &&
-			x < probability_aggressive + probability_normal + probability_relaxed)
+			r < probability_aggressive + probability_normal + probability_relaxed)
 			return backoff_aggressiveness::relaxed;
 		return backoff_aggressiveness::very_relaxed;
 	}
@@ -481,15 +485,12 @@ protected:
 	// Releases the lock.
 	template <release_reason reason>
 	void release(Latch &l) noexcept {
-		// Release and unpark waiters.
-		static constexpr auto memory_order = reason != release_reason::reservation_release ? memory_order::acq_rel : memory_order::release;
-		l.template release<mo>(std::move(lock), memory_order);
+		// Release
+		l.template release<mo>(std::move(lock), memory_order::acq_rel);
 
-		if constexpr (reason != release_reason::reservation_release) {
-			// Latch release will serve as a fence
-			const auto latch_value = l.load(memory_order::relaxed);
-			unpark_if_needed<mo>(l, latch_value);
-		}
+		// Unpark waiters
+		const auto latch_value = l.load(memory_order::relaxed);
+		unpark_if_needed<mo>(l, latch_value);
 	}
 
 	/*
@@ -571,12 +572,15 @@ protected:
 			else if (!is_waiting)
 				l.template register_wait<mo>();
 
-			// If we have been unparked, reset iterations counter to restart backoff process.
-			if (parked)
-				iteration = 0;
+			if constexpr (ProtocolPolicy::reset_iterations_count_after_unpark) {
+				// If we have been unparked, reset iterations counter to restart backoff process.
+				if (parked)
+					iteration = 0;
+			}
 			
 			// Choose a new backoff aggressiveness protocol every few iterations.
-			if (iteration % ProtocolPolicy::refresh_backoff_protocol_every_iterations == 0)
+			if (ProtocolPolicy::refresh_backoff_protocol_every_iterations > 0 &&
+				iteration % ProtocolPolicy::refresh_backoff_protocol_every_iterations == 0)
 				aggressiveness = select_backoff_protocol(l);
 		}
 	}

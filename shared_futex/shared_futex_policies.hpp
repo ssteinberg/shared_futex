@@ -127,14 +127,14 @@ struct exponential_backoff_policy {
 private:
 	static constexpr float sqrt_spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
 		return aggressiveness == backoff_aggressiveness::aggressive ? 
-			64.f :   // 4k pause instructions ~ on the scale of 10 microseconds
-			32.f;    // 1k pause instructions ~ on the scale of  3 microseconds
+			12.f :   // ~900 pause instructions, on the scale of ~3 microseconds
+			8.f;    // ~500 pause instructions, on the scale of ~2 microseconds
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return 
-			aggressiveness == backoff_aggressiveness::aggressive ? 64 : 
-			aggressiveness == backoff_aggressiveness::normal     ? 32 :
-			aggressiveness == backoff_aggressiveness::relaxed    ? 6 : 
+			aggressiveness == backoff_aggressiveness::aggressive ? 256 : 
+			aggressiveness == backoff_aggressiveness::normal     ? 16 :
+			aggressiveness == backoff_aggressiveness::relaxed    ? 8 : 
 			0;
 	}
 	static constexpr std::size_t yield_iterations(backoff_aggressiveness aggressiveness) noexcept {
@@ -146,7 +146,7 @@ private:
 };
 
 /*
- *	@brief	Does not spin, yields and then parks
+ *	@brief	Does not spin, yields and then parks.
  */
 struct relaxed_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
@@ -176,18 +176,20 @@ struct relaxed_backoff_policy {
  */
 struct shared_futex_protocol_policy {
 	// The desired count of waiters using an aggressive backoff protocol, on average.
-	static constexpr auto desired_aggressive_waiters_count = 1;
+	static constexpr auto desired_aggressive_waiters_count = 0;
 	// The desired count of waiters using a normal backoff protocol, on average.
 	static constexpr auto desired_normal_waiters_count = 3;
 	// The desired count of waiters using a relaxed backoff protocol, on average.
 	static constexpr auto desired_relaxed_waiters_count = 0;
 
 	// Each count of those iterations we re-choose the backoff protocol
-	static constexpr auto refresh_backoff_protocol_every_iterations = 1;
+	static constexpr auto refresh_backoff_protocol_every_iterations = 0;
+	// If set to true, iteration counter will be reset after an unpark, causing the waiter to restart its backoff policy.
+	static constexpr bool reset_iterations_count_after_unpark = false;
 	
 	// When looking for candidates to unpark, we unpark a waiter if count of active waiters, that might block said waiter, is lower than 
 	// this threshold.
-	static constexpr auto active_waiters_count_thershold_for_unpark = 1;
+	static constexpr auto active_waiters_count_thershold_for_unpark = 0;
 };
 
 }

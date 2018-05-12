@@ -3,7 +3,8 @@
 
 #pragma once
 
-#include <atomic>
+#include "../atomic/atomic_tsx.hpp"
+
 #include <immintrin.h>
 #include <algorithm>
 
@@ -15,21 +16,27 @@ namespace ste::utils {
  *	@param	spins1	Final spin count
  *	@param	steps	Iterations count to reach 'spins1' spins. After performing this count of iterations spin ceases to increase.
  */
-template <int spins0 = 1, int spins1 = 64, int steps = 32>
+template <int spins0 = 1, int spins1 = 128, int steps = 24>
 class spinner {
-	std::atomic_flag f = ATOMIC_FLAG_INIT;
+	atomic_tsx<std::uint32_t> f{ 0 };
 
 public:
 	void lock() noexcept {
-		for (auto i=0; f.test_and_set(); ++i) {
+		if (!f.bit_test_and_set(0, std::memory_order_acq_rel))
+			return;
+
+		for (auto i=1;; ++i) {
 			// Spin
 			const auto spins = (spins1 - spins0) * std::min(i, steps) / steps + spins0;
 			for (auto j=0; j<spins; ++j)
 				::_mm_pause();
+
+			if (!f.bit_test_and_set(0, std::memory_order_acq_rel))
+				return;
 		}
 	}
 	void unlock() noexcept {
-		f.clear();
+		f.bit_test_and_reset(0, std::memory_order_release);
 	}
 };
 

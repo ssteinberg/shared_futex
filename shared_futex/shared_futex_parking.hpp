@@ -64,8 +64,8 @@ public:
 template <>
 class shared_futex_parking<shared_futex_parking_policy::shared_local> {
 	// Local slot for shared
-	std::condition_variable_any shared_cond_var;
-	utils::spinner<> shared_cond_var_lock;
+	std::condition_variable shared_cond_var;
+	std::mutex shared_cond_var_lock;
 
 	// Parking lot for non-shared
 	using parking_lot_t = parking_lot<>;
@@ -101,7 +101,7 @@ private:
 public:
 	/*
 	 *	@brief	If provides_accurate_unpark_count() returns true then return values from unpark() will always reflect accurate count
-	 *			of unparked threads. Otherwise data is estimated or plainly unavailable and shouldn't be relied on.
+	 *			of unparked threads. Otherwise the data is estimated or plainly unavailable.
 	 */
 	template <modus_operandi mo>
 	static constexpr bool provides_accurate_unpark_count() noexcept {
