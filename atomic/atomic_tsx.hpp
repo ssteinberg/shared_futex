@@ -6,6 +6,7 @@
 #include <atomic>
 #include <immintrin.h>
 #include <future>
+#include <cassert>
 
 namespace ste {
 

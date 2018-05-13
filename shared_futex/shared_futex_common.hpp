@@ -9,9 +9,9 @@
 namespace ste::shared_futex_detail {
 
 // Enables per-thread statistics collection
-#define STE_SHARED_FUTEX_COLLECT_STATISTICS
+// #define STE_SHARED_FUTEX_COLLECT_STATISTICS
 // Enables additional asserts
-static constexpr bool debug_shared_futex = true;
+static constexpr bool debug_shared_futex = false;
 
 
 struct statistics {
@@ -81,6 +81,7 @@ enum class backoff_operation : std::uint8_t {
 
 enum class backoff_result : std::uint8_t {
 	unparked,
+	unparked_and_unregistered,
 	park_predicate_triggered,
 	timeout,
 	spin,
@@ -92,22 +93,25 @@ enum class backoff_aggressiveness : std::uint8_t {
 	relaxed,
 	very_relaxed,
 };
+
 enum class acquisition_primality : std::uint8_t {
 	initial, 
 	waiter,
 };
 
-template <typename Lock>
-struct backoff_return_t {
-	// Backoff result
-	backoff_result result{};
-	// In case of unpark, an optional lock that was reserved for the parked waiter by the unparker.
-	Lock reserved_lock{};
+enum class unpark_tactic : std::uint8_t {
+	one,
+	all,
 };
 
 }
 
 enum class shared_futex_parking_policy {
+	// Disallow parking
 	none,
+	// Use system shared parking lot
 	parking_lot,
+	// Use a local parking slot for shared and a system shared parking lot
+	// Trades latch memory for better performance during mixed contention workloads
+	shared_local
 };
