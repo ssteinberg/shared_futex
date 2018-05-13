@@ -370,6 +370,23 @@ private:
 					  method == latch_acquisition_method::counter) {
 			// Attempt to free the latch
 			latch_data_type expected = storage.latch.load(memory_order::acquire);
+								 
+			// Optimization for counter method: If we have enough holders, atomically decrement counter.
+			if constexpr (method == latch_acquisition_method::counter) {
+				static constexpr auto shared_holders_for_atomic_add = 2;
+
+				 if (latch_descriptor{ expected }.template consumers<mo>() >= shared_holders_for_atomic_add) {
+				 	if constexpr (shared_futex_detail::collect_statistics)
+				 		++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+    
+				 	const auto new_val = storage.latch.fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
+				 	if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
+				 		storage.latch.store(static_cast<latch_data_type>(desired_latch), store_mo);
+    
+				 	return;
+				 }
+			}
+
 			do {
 				if constexpr (shared_futex_detail::collect_statistics)
 					++shared_futex_detail::debug_statistics.lock_rmw_instructions;

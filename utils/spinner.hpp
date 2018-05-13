@@ -5,35 +5,37 @@
 
 #include "../atomic/atomic_tsx.hpp"
 
+#include <intrin.h>
 #include <immintrin.h>
 #include <algorithm>
 
 namespace ste::utils {
 
 /*
- *	@brief	Simple spin locker with linearly increasing pauses between lock attempts.
- *	@param	spins0	Spin count on first iteration
- *	@param	spins1	Final spin count
- *	@param	steps	Iterations count to reach 'spins1' spins. After performing this count of iterations spin ceases to increase.
+ *	@brief	Simple spin locker with a symmetry-breaking spin count modulation.
+ *	
+ *	@param	base_spins
+ *	@param	symmetry_breaker
  */
-template <int spins0 = 1, int spins1 = 128, int steps = 24>
+template <int base_spins = 64, int symmetry_breaker = 64>
 class spinner {
 	atomic_tsx<std::uint32_t> f{ 0 };
 
 public:
+	bool try_lock() noexcept {
+		return !f.bit_test_and_set(0, std::memory_order_acq_rel);
+	}
 	void lock() noexcept {
-		if (!f.bit_test_and_set(0, std::memory_order_acq_rel))
+		if (try_lock())
 			return;
 
-		for (auto i=1;; ++i) {
+		do {
 			// Spin
-			const auto spins = (spins1 - spins0) * std::min(i, steps) / steps + spins0;
+			const auto rdtsc = __rdtsc();
+			const auto spins = static_cast<std::size_t>(rdtsc % symmetry_breaker) + base_spins;
 			for (auto j=0; j<spins; ++j)
 				::_mm_pause();
-
-			if (!f.bit_test_and_set(0, std::memory_order_acq_rel))
-				return;
-		}
+		} while (!try_lock());
 	}
 	void unlock() noexcept {
 		f.bit_test_and_reset(0, std::memory_order_release);

@@ -213,15 +213,16 @@ struct shared_futex_backoff_protocol {
 								backoff_aggressiveness aggressiveness,
 								ParkPredicate &&park_predicate,
 								OnPark &&on_park,
+								const float rand_seed,
 								std::size_t iteration,
 								const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Query the policy for backoff operation
-		const backoff_operation op = BackoffPolicy::template select_operation<mo>(iteration, aggressiveness, until);
+		const backoff_operation op = BackoffPolicy::template select_operation<mo>(iteration, rand_seed, aggressiveness, until);
 
 		// Spin
 		if (op == backoff_operation::spin) {
 			// Choose spin count
-			const auto spins = BackoffPolicy::template spin_count<mo>(iteration, aggressiveness);
+			const auto spins = BackoffPolicy::template spin_count<mo>(iteration, rand_seed, aggressiveness);
 			spin(spins);
 
 			return backoff_result::spin;
@@ -413,13 +414,6 @@ protected:
 			if (x + u > ProtocolPolicy::active_waiters_count_thershold_for_unpark)
 				return 0;
 		}
-
-		// ... and all shared waiters
-		if constexpr (unparker_mo != modus_operandi::shared_lock) {
-			const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
-			if (unparked)
-				return unparked;
-		}
 		
 		// ... an exclusive waiter	
 		if (can_acquire_lock<acquisition_primality::waiter, modus_operandi::exclusive_lock>(latch_value)) {
@@ -432,11 +426,16 @@ protected:
 			}
 		}
 
+		// ... and all shared waiters
+		const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
+		if (unparked)
+			return unparked;
+
 		return 0;
 	}
 
 	// Chooses a backoff protocol
-	backoff_aggressiveness select_backoff_protocol(Latch &l) const noexcept {
+	backoff_aggressiveness select_backoff_protocol(const float rand_seed, Latch &l) const noexcept {
 		if constexpr (mo == modus_operandi::shared_lock)
 			return backoff_aggressiveness::relaxed;
 
@@ -452,7 +451,7 @@ protected:
 		const auto probability_relaxed = static_cast<float>(ProtocolPolicy::desired_relaxed_waiters_count);
 
 		// Generate a random number and choose protocol
-		const auto r = rand() * static_cast<float>(waiters);
+		const auto r = rand_seed * static_cast<float>(waiters);
 		if (ProtocolPolicy::desired_aggressive_waiters_count > 0 &&
 			r < probability_aggressive)
 			return backoff_aggressiveness::aggressive;
@@ -501,9 +500,12 @@ protected:
 	template <typename Clock, typename Duration>
 	bool wait_and_try_lock_until(Latch &l, const std::chrono::time_point<Clock, Duration> &until,
 								 latch_lock_t &&lock_to_upgrade = {}) noexcept {
+		// Prepare a random seed
+		const auto rand_seed = rand();
+
 		// Wait and Choose backoff agressiveness protocol
 		l.template register_wait<mo>();
-		auto aggressiveness = select_backoff_protocol(l);
+		auto aggressiveness = select_backoff_protocol(rand_seed, l);
 
 		for (std::size_t iteration = 1;; ++iteration) {
 			if constexpr (shared_futex_detail::collect_statistics)
@@ -526,6 +528,7 @@ protected:
 																		   aggressiveness,
 																		   park_predicate,
 																		   on_park,
+																		   rand_seed,
 																		   iteration,
 																		   until);
 			/*		Possible backoff results:
@@ -581,7 +584,7 @@ protected:
 			// Choose a new backoff aggressiveness protocol every few iterations.
 			if (ProtocolPolicy::refresh_backoff_protocol_every_iterations > 0 &&
 				iteration % ProtocolPolicy::refresh_backoff_protocol_every_iterations == 0)
-				aggressiveness = select_backoff_protocol(l);
+				aggressiveness = select_backoff_protocol(rand_seed, l);
 		}
 	}
 

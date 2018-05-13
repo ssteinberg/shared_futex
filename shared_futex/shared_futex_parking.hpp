@@ -14,6 +14,15 @@ template <shared_futex_parking_policy policy>
 class shared_futex_parking {};
 
 
+// Empty parital 
+template <>
+class shared_futex_parking<shared_futex_parking_policy::none> {
+public:
+	template <modus_operandi>
+	static constexpr bool provides_accurate_unpark_count() noexcept { return false; }
+};
+
+
 // Partial specialization for 'parking lot' policy
 template <>
 class shared_futex_parking<shared_futex_parking_policy::parking_lot> {
