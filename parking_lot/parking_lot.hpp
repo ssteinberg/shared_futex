@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "../utils/spinner.hpp"
+
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
@@ -10,7 +12,6 @@
 #include <type_traits>
 #include <functional>
 #include <optional>
-#include <intrin.h>
 #include <cassert>
 
 namespace ste {
@@ -26,37 +27,15 @@ enum class parking_lot_wait_state {
 
 namespace parking_lot_detail {
 
-class simple_spinner {
-	std::atomic_flag f = ATOMIC_FLAG_INIT;
-
-public:
-	void lock() noexcept {
-		if (!f.test_and_set())
-			return;
-
-		// Spin
-		static constexpr int spins_on_last_iteration = 64;
-		static constexpr int max_spin_iterations = 16;
-		for (auto i=0; f.test_and_set(); ++i) {
-			const auto spins = spins_on_last_iteration * std::min(i, max_spin_iterations) / max_spin_iterations;
-			for (auto j=0; j<spins; ++j)
-			::_mm_pause();
-		}
-	}
-	void unlock() noexcept {
-		f.clear();
-	}
-};
-
 class parking_lot_node_base {
 public:
 	static constexpr std::size_t key_size = 8;
 
 private:
-	using mutex_t = simple_spinner;
+	using mutex_t = std::mutex;// utils::spinner<>;
 
 	mutex_t m;
-	std::condition_variable_any cv;
+	std::condition_variable cv;
 
 	bool signaled{ false };
 
@@ -185,7 +164,7 @@ class parking_lot_slot {
 	static constexpr auto alignment = std::hardware_destructive_interference_size;
 
 public:
-	using mutex_t = simple_spinner;
+	using mutex_t = std::mutex;// utils::spinner<>;
 	alignas(alignment) mutex_t m;
 
 	// Simple intrusive dlist
@@ -239,7 +218,7 @@ public:
 
 }
 
-template <typename NodeData>
+template <typename NodeData = void>
 class parking_lot {
 	using node_t = parking_lot_detail::parking_lot_node<NodeData>;
 	using park_return_t = std::conditional_t<
@@ -283,7 +262,7 @@ private:
 
 public:
 	/*
-	 *  @brief	If on_park returns true, parks the calling thread in the specified key indefinitely.
+	 *  @brief	If park_predicate returns true, parks the calling thread in the specified key indefinitely.
 	 */
 	template <typename K, typename ParkPredicate, typename OnPark>
 	park_return_t park(ParkPredicate &&park_predicate,
@@ -295,7 +274,7 @@ public:
 						  std::chrono::steady_clock::time_point::max());
 	}
 	/*
-	 *	@brief	If on_park returns true, parks the calling thread in the specified slot until the timeout has expired 
+	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
 	*/
 	template <typename K, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
@@ -358,13 +337,13 @@ public:
 	}
 
 	/*
-	 *	@brief	Attempts to unpark all nodes using f, which will be used to construct a NodeData object that
-	 *			will be passed to the signaled thread. f will be passed the current count of unparked nodes.
+	 *	@brief	Attempts to unpark all nodes using args, which will be used to construct a NodeData object that will be passed to the 
+	 *			signaled thread.
 	 *			
 	 *	@return	Number of nodes that were signaled
 	 */
-	template <typename K, typename F>
-	std::size_t unpark_all_closure(const K &key, F&& f) {
+	template <typename K, typename... Args>
+	std::size_t unpark_all(const K &key, const Args&... args) {
 		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
 		std::size_t count = 0;
 
@@ -382,10 +361,9 @@ public:
 					// Erase from dlist, and unpark.
 					park.erase(node);
 					if constexpr (!std::is_void_v<NodeData>) {
-						static_cast<node_t*>(node)->signal(f(count));
+						static_cast<node_t*>(node)->signal(NodeData(args...));
 					}
 					else {
-						f(count);
 						static_cast<node_t*>(node)->signal();
 					}
 
@@ -397,20 +375,6 @@ public:
 		}
 
 		return count;
-	}
-
-	/*
-	 *	@brief	Attempts to unpark all nodes using args, which will be used to construct a NodeData object that
-	 *			will be passed to the signaled thread.
-	 *			
-	 *	@return	Number of nodes that were signaled
-	 */
-	template <typename K, typename... Args>
-	std::size_t unpark_all(const K &key, const Args&... args) {
-		if constexpr (!std::is_void_v<NodeData>)
-			return unpark_all_closure(key, [=](std::size_t) { return NodeData(args...); });
-		else
-			return unpark_all_closure(key, [](std::size_t) {});
 	}
 
 	/*
@@ -444,50 +408,6 @@ public:
 				}
 
 				node = next;
-			}
-		}
-
-		return 0;
-	}
-
-	/*
-	*	@brief	First counts how many suitable nodes can be unparked, then, if any found and while holding lock, invokes the supplied closure, 
-	*			passing the count as argument. Ultimately, unparks all similarly to unpark_all().
-	*			Limited to 32 nodes!
-	*			
-	*	@return	True if any nodes where found and unparked, false otherwise.
-	*/
-	template <typename K, typename F, typename... Args>
-	std::size_t count_and_unpark_all(const K &key, F&& f, const Args&... args) {
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
-
-		// Statically allocate, limiting to 32 nodes.
-		std::size_t count = 0;
-		std::array<node_t*, 32> nodes;
-
-		{
-			std::unique_lock<parking_lot_detail::parking_lot_slot::mutex_t> bucket_lock(park.m);
-
-			// Extract suitable nodes
-			for (auto node = park.head; node && count < nodes.max_size(); ) {
-				if (node->id_equals(this, key)) {
-					assert(!node->is_signalled());
-
-					// Extract from dlist
-					park.erase(node);
-					nodes[count++] = static_cast<node_t*>(node);
-				}
-
-				node = node->next;
-			}
-
-			// Unpark
-			if (count) {
-				f(count);
-				for (auto *n = nodes.data();n!=nodes.data()+count;++n)
-					(*n)->signal(args...);
-
-				return count;
 			}
 		}
 
