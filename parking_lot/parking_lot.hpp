@@ -32,7 +32,7 @@ public:
 	static constexpr std::size_t key_size = 8;
 
 private:
-	using mutex_t = std::mutex;// utils::spinner<>;
+	using mutex_t = std::mutex;
 
 	mutex_t m;
 	std::condition_variable cv;

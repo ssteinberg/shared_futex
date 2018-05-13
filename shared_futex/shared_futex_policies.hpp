@@ -26,7 +26,12 @@ struct use_transactional_hle_exclusive {};
 // Consumers can abort a transaction manually by calling xabort.
 struct use_transactional_rtm {};
 
+// Splits latch into slots. Slots are placed on distinct cache lines, greatly increasing potential for concurrency. Slots are allocated
+// statically, however actual count of slots in use varies based on usage.
+struct use_slots {};
+
 }
+
 
 /*
  *	@brief	Policy of shared_futex's data storage
@@ -53,9 +58,9 @@ struct shared_futex_default_policy {
 	 */
 
 	// Specifies thread parking policy
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
 	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
-	static constexpr bool count_waiters = false;
+	static constexpr bool count_waiters = true;
 	// List of requested featrues, see namespace shared_futex_features.
 	using features = std::tuple<>;
 };

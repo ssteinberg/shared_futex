@@ -5,9 +5,69 @@
 
 #include "shared_futex_common.hpp"
 
+#include <array>
 #include <type_traits>
+#include <new>
 
 namespace ste::shared_futex_detail {
+
+
+// Latch data storage.
+// Multi-slot specialization
+template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, int slots = 1>
+struct latch_storage {
+	static_assert(slots > 1);
+
+	static constexpr auto count = slots;
+
+	struct slot_t {
+		static constexpr auto slot_alignment = std::hardware_destructive_interference_size;
+		alignas(slot_alignment) latch_type latch;
+		latch_type* operator->() noexcept { return &latch; }
+		const latch_type* operator->() const noexcept { return &latch; }
+	};
+
+	// Slots
+	std::array<slot_t, slots> latch_slots{};
+	// Parking/waiters counters
+	waiters_type waiters{};
+	
+	auto& operator[](std::size_t idx) noexcept { return latch_slots[idx]; }
+	const auto& operator[](std::size_t idx) const noexcept { return latch_slots[idx]; }
+};
+// Generic single-slot partial specialization
+template <typename waiters_type, typename latch_type, std::size_t alignment>
+struct latch_storage<true, waiters_type, latch_type, alignment, 1> {
+	// Parking/waiters counters
+	waiters_type waiters{};
+	// Latch
+	latch_type latch{};
+	
+	auto* operator[](std::size_t idx) noexcept {
+		assert(idx == 0);
+		return &latch;
+	}
+	const auto* operator[](std::size_t idx) const noexcept {
+		assert(idx == 0);
+		return &latch;
+	}
+};
+// Single-slot without waiters/parked counters partial specialization
+template <typename waiters_type, typename latch_type, std::size_t alignment>
+struct latch_storage<false, waiters_type, latch_type, alignment, 1> {
+	// Latch
+	latch_type latch{};
+	
+	auto* operator[](std::size_t idx) noexcept {
+		assert(idx == 0);
+		return &latch;
+	}
+	const auto* operator[](std::size_t idx) const noexcept {
+		assert(idx == 0);
+		return &latch;
+	}
+};
+
 
 template <typename T, typename Data, shared_futex_parking_policy parking_policy>
 struct latch_descriptor_storage {

@@ -22,6 +22,8 @@ class spinner {
 	atomic_tsx<std::uint32_t> f{ 0 };
 
 public:
+	spinner() noexcept = default;
+
 	bool try_lock() noexcept {
 		return !f.bit_test_and_set(0, std::memory_order_acq_rel);
 	}
