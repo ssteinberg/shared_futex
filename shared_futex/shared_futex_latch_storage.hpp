@@ -4,6 +4,7 @@
 #pragma once
 
 #include "shared_futex_common.hpp"
+#include "../atomic/atomic_tsx.hpp"
 
 #include <array>
 #include <type_traits>
@@ -29,6 +30,9 @@ struct latch_storage {
 
 	// Slots
 	std::array<slot_t, slots> latch_slots{};
+	// Slot counter
+	atomic_tsx<std::uint32_t> active_slots{ 1 };
+
 	// Parking/waiters counters
 	waiters_type waiters{};
 	

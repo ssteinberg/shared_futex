@@ -9,12 +9,16 @@
 namespace ste::shared_futex_detail {
 
 // Enables per-thread statistics collection
-// #define STE_SHARED_FUTEX_COLLECT_STATISTICS
+#define STE_SHARED_FUTEX_COLLECT_STATISTICS
 // Enables additional asserts
 static constexpr bool debug_shared_futex = false;
 
 
 struct statistics {
+	std::size_t shared_locks{};
+	std::size_t upgradeable_locks{};
+	std::size_t exclusive_locks{};
+
 	std::size_t iterations{};
 
 	std::size_t lock_rmw_instructions{};
@@ -36,6 +40,9 @@ struct statistics {
 	std::size_t transactional_lock_elision_aborts_other{};
 
 	statistics& operator+=(const statistics& rhs) noexcept {
+		shared_locks += rhs.shared_locks;
+		upgradeable_locks += rhs.upgradeable_locks;
+		exclusive_locks += rhs.exclusive_locks;
 		iterations += rhs.iterations;
 		lock_rmw_instructions += rhs.lock_rmw_instructions;
 		lock_atomic_loads += rhs.lock_atomic_loads;

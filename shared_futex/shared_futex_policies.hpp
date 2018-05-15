@@ -67,7 +67,8 @@ struct shared_futex_default_policy {
 
 
 /*
- *	@brief	Simple spin-lock backoff policy
+ *	@brief	Simple spin-lock backoff policy.
+ *			Employs cross-thread symmetry-breaking spinning logic.
  */
 struct spinlock_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
@@ -92,9 +93,10 @@ struct spinlock_backoff_policy {
 
 /*
  *	@brief	Spins, yields and then parks.
- *			A spin cycle will take 3-5 ns, a context-switch ~1000ns and a park will cost thousands ns and more in case 
+ *			A spin cycle will take ~4 ns, a context-switch ~1000ns and a park will cost multiple thousands ns and more in case 
  *			of contention on the parking slot. Therefore this implementation is essentially an exponential backoff policy, which is a 
  *			well studied approach to find an acceptable balance between contending processes and reduce number of collisions.
+ *			Employs cross-thread symmetry-breaking spinning logic.
  */
 struct exponential_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;

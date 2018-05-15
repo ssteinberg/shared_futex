@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "../utils/spinner.hpp"
-
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
@@ -164,7 +162,7 @@ class parking_lot_slot {
 	static constexpr auto alignment = std::hardware_destructive_interference_size;
 
 public:
-	using mutex_t = std::mutex;// utils::spinner<>;
+	using mutex_t = std::mutex;
 	alignas(alignment) mutex_t m;
 
 	// Simple intrusive dlist
