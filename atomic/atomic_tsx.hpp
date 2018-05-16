@@ -25,11 +25,35 @@ enum class memory_order {
 	acq_rel = std::memory_order_acq_rel,
 	seq_cst = std::memory_order_seq_cst,
 
-	consume = std::memory_order_consume,
+	// Deprecated in c++17
+	consume [[deprecated]] = std::memory_order_consume,
 
 	xacquire = std::memory_order_acquire | 0x10000,
 	xrelease = std::memory_order_release | 0x10000
 };
+
+/*
+ *	@brief	Decays a memory order to a load-specific memory order.
+ *			E.g. acq_rel to acquire.
+ */
+memory_order inline memory_order_load(memory_order order) noexcept {
+	if (order == memory_order::acq_rel)
+		return memory_order::acquire;
+	if (order == memory_order::release || order == memory_order::xrelease)
+		return memory_order::relaxed;
+	return order;
+}
+/*
+ *	@brief	Decays a memory order to a store-specific memory order.
+ *			E.g. acq_rel to release.
+ */
+memory_order inline memory_order_store(memory_order order) noexcept {
+	if (order == memory_order::acq_rel)
+		return memory_order::release;
+	if (order == memory_order::acquire || order == memory_order::xacquire)
+		return memory_order::relaxed;
+	return order;
+}
 
 namespace _atomic_tsx_detail {
 

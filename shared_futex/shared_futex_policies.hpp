@@ -1,12 +1,11 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "shared_futex_common.hpp"
 
 #include <cstddef>
-#include <cmath>
 #include <chrono>
 #include <new>
 #include <tuple>
@@ -16,7 +15,7 @@
 namespace ste {
 
 /*
- *	Flags affecting shared_futex's global behaviour
+ *	Feature flags affecting shared_futex's global behaviour
  */
 namespace shared_futex_features {
 
@@ -26,7 +25,12 @@ struct use_transactional_hle_exclusive {};
 // Consumers can abort a transaction manually by calling xabort.
 struct use_transactional_rtm {};
 
+// Splits latch into slots. Slots are placed on distinct cache lines, greatly increasing potential for concurrency. Slots are allocated
+// statically, however actual count of slots in use varies based on usage.
+struct use_slots {};
+
 }
+
 
 /*
  *	@brief	Policy of shared_futex's data storage
@@ -53,16 +57,17 @@ struct shared_futex_default_policy {
 	 */
 
 	// Specifies thread parking policy
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
 	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
-	static constexpr bool count_waiters = false;
+	static constexpr bool count_waiters = true;
 	// List of requested featrues, see namespace shared_futex_features.
 	using features = std::tuple<>;
 };
 
 
 /*
- *	@brief	Simple spin-lock backoff policy
+ *	@brief	Simple spin-lock backoff policy.
+ *			Employs cross-thread symmetry-breaking spinning logic.
  */
 struct spinlock_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
@@ -87,9 +92,10 @@ struct spinlock_backoff_policy {
 
 /*
  *	@brief	Spins, yields and then parks.
- *			A spin cycle will take 3-5 ns, a context-switch ~1000ns and a park will cost thousands ns and more in case 
+ *			A spin cycle will take ~4 ns, a context-switch ~1000ns and a park will cost multiple thousands ns and more in case 
  *			of contention on the parking slot. Therefore this implementation is essentially an exponential backoff policy, which is a 
  *			well studied approach to find an acceptable balance between contending processes and reduce number of collisions.
+ *			Employs cross-thread symmetry-breaking spinning logic.
  */
 struct exponential_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;

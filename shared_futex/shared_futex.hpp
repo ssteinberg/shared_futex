@@ -477,6 +477,22 @@ protected:
 			lock = l.template upgrade<primality>(std::move(lock_to_upgrade), validator);
 		else
 			lock = l.template acquire<primality, mo>(validator);
+		
+		if constexpr (shared_futex_detail::collect_statistics) {
+			if (!!lock) {
+				switch (mo) {
+				case modus_operandi::shared_lock:
+					++shared_futex_detail::debug_statistics.shared_locks;
+					break;
+				case modus_operandi::upgradeable_lock:
+					++shared_futex_detail::debug_statistics.upgradeable_locks;
+					break;
+				default:
+					++shared_futex_detail::debug_statistics.exclusive_locks;
+					break;
+				}
+			}
+		}
 
 		return !!lock;
 	}
