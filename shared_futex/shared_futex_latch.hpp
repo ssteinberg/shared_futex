@@ -78,7 +78,7 @@ private:
 		acquired,
 		transaction,
 	};
-	enum class lock_contention { none, contented };
+	enum class lock_contention { none, contended };
 
 	enum class internal_acquisition_flags {
 		none = 0, 
@@ -99,7 +99,8 @@ private:
 	static constexpr bool has_waiters_counter = count_waiters || parking_allowed;
 	static constexpr bool count_shared_parked = true;
 
-	static constexpr std::size_t slot_count = use_slots ? 4 : 1;
+	static constexpr std::size_t slot_count = use_slots ? 8 : 1;
+	static constexpr std::uint32_t primary_slot = 0;
 
 public:
 	// Represents a latch lock. A valid object holds a lock and should be released by consuming the object with a call to latch's release().
@@ -114,12 +115,13 @@ public:
 
 	public:
 		latch_lock() noexcept = default;
-		latch_lock(latch_lock &&o) noexcept : mode(std::exchange(o.mode, lock_status::not_acquired)) {}
+		latch_lock(latch_lock &&o) noexcept : mode(std::exchange(o.mode, lock_status::not_acquired)), slot_used(o.slot_used) {}
 		latch_lock(const latch_lock&) = delete;
 		latch_lock &operator=(latch_lock &&o) noexcept {
 			assert(mode == lock_status::not_acquired);
 
 			mode = std::exchange(o.mode, lock_status::not_acquired);
+			slot_used = o.slot_used;
 			return *this;
 		}
 		latch_lock &operator=(const latch_lock&) = delete;
@@ -296,7 +298,7 @@ private:
 					++shared_futex_detail::debug_statistics.lock_rmw_instructions;
 
 				if (latch[slot]->compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order))
-					return { lock_status::acquired, lock_contention::contented };
+					return { lock_status::acquired, lock_contention::contended };
 			}
 		}
 		else /*(method == latch_acquisition_method::set_flag)*/ {
@@ -308,35 +310,42 @@ private:
 			if constexpr (tsx_hle_exclusive && primality == shared_futex_detail::acquisition_primality::initial) {
 				// xacquire for transactional hardware-lock-elision
 				if (!latch[slot]->bit_test_and_set(bit, memory_order::xacquire))
-					return { lock_status::transaction, lock_contention::contented };
+					return { lock_status::transaction, lock_contention::contended };
 			}
 			else {
 				if (!latch[slot]->bit_test_and_set(bit, order))
-					return { lock_status::acquired, lock_contention::contented };
+					return { lock_status::acquired, lock_contention::contended };
 			}
 		}
 
 		// Failed
-		return { lock_status::not_acquired, lock_contention::contented };
+		return { lock_status::not_acquired, lock_contention::contended };
 	}
 	// Attempts lock acquisition, multi-slot shared logic.
 	template <shared_futex_detail::acquisition_primality primality, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_shared(Validator &&validator, memory_order order) noexcept {
-		std::uint32_t slot = 0, active_slots = 1;
-		if constexpr (primality == shared_futex_detail::acquisition_primality::initial) {
-			// For inital attempt, choose a slot at random from active slots.
-			active_slots = std::min<std::uint32_t>(latch.active_slots.load(), latch_storage_t::count);
-			slot = __rdtsc() % active_slots;
-		}
+		// Choose a slot at random from active slots.
+		const std::uint32_t active_slots = latch.active_slots.load();
+		const std::uint32_t slot = __rdtsc() % active_slots;
+		assert(active_slots <= latch_storage_t::count);
 
-		const auto [result, contention] = acquire_internal_slot<primality, modus_operandi::shared_lock>(std::forward<Validator>(validator), order);
+		// Attempt acquire
+		const auto [result, contention] = acquire_internal_slot<primality, modus_operandi::shared_lock>(slot, 
+																										std::forward<Validator>(validator), 
+																										order);
 		if (result != lock_status::not_acquired) {
-			// Success
-			if constexpr (primality == shared_futex_detail::acquisition_primality::initial) {
-				// In case of contention of the slot, consider increasing active slot count.
-				// Compare-exchange to avoid racing with the non-shared acquirer.
-				if (active_slots < latch_storage_t::count)
-					latch.active_slots.compare_exchange_strong(active_slots, active_slots + 1, memory_order::release, memory_order::relaxed);
+			// Success. Re-check active slot count and make sure we are not out of range
+			if (latch.active_slots.load() <= slot) {
+				// Revert and fail
+				release_internal_slot<modus_operandi::shared_lock>(slot, result, order);
+				return {};
+			}
+			
+			// In case of contention on the slot, consider increasing active slot count.
+			// Compare-exchange to avoid racing with a non-shared acquirer.
+			if (contention == lock_contention::contended && active_slots < latch_storage_t::count) {
+				auto expected = active_slots;
+				latch.active_slots.compare_exchange_strong(expected, active_slots + 1, memory_order::release, memory_order::relaxed);
 			}
 
 			// Return acquired lock
@@ -353,23 +362,30 @@ private:
 		const auto acquire_order = memory_order_load(order);
 
 		// Attempt to acquire primary slot first
-		const auto primary_status = acquire_internal_slot<primality, mo>(0, validator, order).first;
+		const auto primary_status = acquire_internal_slot<primality, mo>(primary_slot, validator, order).first;
 		if (primary_status == lock_status::not_acquired)
 			return {};
 		// If lock is acquired in transactional mode, we are done
 		if (primary_status == lock_status::transaction)
 			return { primary_status };
 
-		// We have acquired primary slot, so there're possibly only shared lockers to content with on non-primary slots.
-		// Kill concurrency by setting active slot count to 1. We hold primary latch, so effectively we are the only ones mutating active_slots.
-		const auto active_slots = std::min<std::uint32_t>(latch.active_slots.exchange(1, order), latch_storage_t::count);
+		// We have acquired primary slot, so there're possibly only shared lockers to contend with on non-primary slots.
+		// Kill concurrency by setting active slot count to 1. We hold primary latch, so effectively we are the only one mutating active_slots.
+		const auto active_slots = latch.active_slots.exchange(1, order);
+		assert(active_slots <= latch_storage_t::count);
+
 		// Check if the rest of the slots are valid
+		// (Upgradeable locks are not mutually exclusive with shared locks)
 		bool success = true;
-		for (std::uint32_t s=1; s<active_slots; ++s) {
-			const auto latch_value = latch[s]->load(acquire_order);
-			if (!validator(latch_descriptor{ latch_value })) {
-				success = false;
-				break;
+		if constexpr (mo != modus_operandi::upgradeable_lock) {
+			for (std::uint32_t s = 0; s < active_slots; ++s) {
+				if (s == primary_slot)
+					continue;
+				const auto latch_value = latch[s]->load(acquire_order);
+				if (!validator(latch_descriptor{ latch_value })) {
+					success = false;
+					break;
+				}
 			}
 		}
 		
@@ -378,7 +394,7 @@ private:
 			return { primary_status };
 
 		// Failure. Revert primary slot.
-		release_internal_slot<mo>(0, primary_status, order);
+		release_internal_slot<mo>(primary_slot, primary_status, order);
 		return {};
 	}
 	// Attempts lock acquisition
@@ -405,7 +421,7 @@ private:
 		}
 
 		// Single-slot acquisition
-		const auto status = acquire_internal_slot<primality, mo, flags>(0, std::forward<Validator>(validator), order).first;
+		const auto status = acquire_internal_slot<primality, mo, flags>(primary_slot, std::forward<Validator>(validator), order).first;
 		return latch_lock{ status };
 	}
 
@@ -487,7 +503,7 @@ private:
 				return;
 		}
 
-		std::uint32_t slot = 0;
+		std::uint32_t slot = primary_slot;
 		if constexpr (use_slots) {
 			// Multi-slot mode
 			slot = used_slot;
@@ -503,7 +519,7 @@ public:
 	shared_futex_default_latch &operator=(const shared_futex_default_latch&) = delete;
 	~shared_futex_default_latch() noexcept {
 		// Latch dtored while lock is held or pending?
-		assert(latch[0]->load() == latch_data_type{});
+		assert(latch[primary_slot]->load() == latch_data_type{});
 	}
 
 	latch_descriptor load(memory_order order = memory_order::acquire) const noexcept {
@@ -512,7 +528,7 @@ public:
 				++shared_futex_detail::debug_statistics.lock_atomic_loads;
 		}
 
-		return latch_descriptor{ latch[0]->load(order) };
+		return latch_descriptor{ latch[primary_slot]->load(order) };
 	}
 	waiters_descriptor load_waiters_counters(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (has_waiters_counter) {

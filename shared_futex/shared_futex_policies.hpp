@@ -1,12 +1,11 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "shared_futex_common.hpp"
 
 #include <cstddef>
-#include <cmath>
 #include <chrono>
 #include <new>
 #include <tuple>
@@ -16,7 +15,7 @@
 namespace ste {
 
 /*
- *	Flags affecting shared_futex's global behaviour
+ *	Feature flags affecting shared_futex's global behaviour
  */
 namespace shared_futex_features {
 
