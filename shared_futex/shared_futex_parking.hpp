@@ -5,6 +5,7 @@
 
 #include "shared_futex_common.hpp"
 #include "../parking_lot/parking_lot.hpp"
+#include "../utils/spinner.hpp"
 
 #include <type_traits>
 

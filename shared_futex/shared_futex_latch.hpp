@@ -75,7 +75,6 @@ private:
 	};
 	enum class lock_status : std::uint8_t {
 		not_acquired,
-		pending,
 		acquired,
 		transaction,
 	};
@@ -126,8 +125,7 @@ public:
 		latch_lock &operator=(const latch_lock&) = delete;
 		~latch_lock() noexcept { assert(mode == lock_status::not_acquired); }
 
-		explicit operator bool() const noexcept { return mode != lock_status::not_acquired && mode != lock_status::pending; }
-		bool is_pending() const noexcept { return mode == lock_status::pending; }
+		explicit operator bool() const noexcept { return mode != lock_status::not_acquired; }
 	};
 
 	using latch_data_type = std::make_signed_t<typename futex_policy::latch_data_type>;
@@ -336,8 +334,9 @@ private:
 			// Success
 			if constexpr (primality == shared_futex_detail::acquisition_primality::initial) {
 				// In case of contention of the slot, consider increasing active slot count.
+				// Compare-exchange to avoid racing with the non-shared acquirer.
 				if (active_slots < latch_storage_t::count)
-					latch.active_slots.fetch_add(1, memory_order::release);
+					latch.active_slots.compare_exchange_strong(active_slots, active_slots + 1, memory_order::release, memory_order::relaxed);
 			}
 
 			// Return acquired lock
@@ -349,11 +348,38 @@ private:
 		return {};
 	}
 	// Attempts lock acquisition, multi-slot non-shared logic.
-	template <shared_futex_detail::acquisition_primality primality, typename Validator>
+	template <shared_futex_detail::acquisition_primality primality, modus_operandi mo, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_nonshared(Validator &&validator, memory_order order) noexcept {
-		// Any lock by a non-shared consumer kills concurrency, therefore we can store 
-		const auto active_slots = std::min<std::uint32_t>(latch.active_slots.exchange(1, memory_order::acq_rel), latch_storage_t::count);
-		for (std::uint32_t s=0; s<active_slots; ++s) {}
+		const auto acquire_order = memory_order_load(order);
+
+		// Attempt to acquire primary slot first
+		const auto primary_status = acquire_internal_slot<primality, mo>(0, validator, order).first;
+		if (primary_status == lock_status::not_acquired)
+			return {};
+		// If lock is acquired in transactional mode, we are done
+		if (primary_status == lock_status::transaction)
+			return { primary_status };
+
+		// We have acquired primary slot, so there're possibly only shared lockers to content with on non-primary slots.
+		// Kill concurrency by setting active slot count to 1. We hold primary latch, so effectively we are the only ones mutating active_slots.
+		const auto active_slots = std::min<std::uint32_t>(latch.active_slots.exchange(1, order), latch_storage_t::count);
+		// Check if the rest of the slots are valid
+		bool success = true;
+		for (std::uint32_t s=1; s<active_slots; ++s) {
+			const auto latch_value = latch[s]->load(acquire_order);
+			if (!validator(latch_descriptor{ latch_value })) {
+				success = false;
+				break;
+			}
+		}
+		
+		// Lock acquired
+		if (success)
+			return { primary_status };
+
+		// Failure. Revert primary slot.
+		release_internal_slot<mo>(0, primary_status, order);
+		return {};
 	}
 	// Attempts lock acquisition
 	template <
@@ -375,7 +401,7 @@ private:
 			if constexpr (mo == modus_operandi::shared_lock)
 				return acquire_internal_multislot_shared<primality>(std::forward<Validator>(validator), order);
 			else
-				return acquire_internal_multislot_nonshared<primality>(std::forward<Validator>(validator), order);
+				return acquire_internal_multislot_nonshared<primality, mo>(std::forward<Validator>(validator), order);
 		}
 
 		// Single-slot acquisition
@@ -400,9 +426,9 @@ private:
 	}
 	// Release a slot
 	template <modus_operandi mo>
-	void release_internal_slot(int slot, lock_status mode, memory_order order) noexcept {
+	void release_internal_slot(std::uint32_t slot, lock_status mode, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<mo>();
-		const auto store_mo = order == memory_order::relaxed || order == memory_order::acquire ? memory_order::relaxed : memory_order::release;
+		const auto store_order = memory_order_store(order);
 
 		// Calculate some latch bits
 		latch_descriptor desired_latch = {};
@@ -423,7 +449,7 @@ private:
     
 				 	const auto new_val = latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
 				 	if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
-				 		latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_mo);
+				 		latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
     
 				 	return;
 				 }
@@ -449,45 +475,24 @@ private:
 				}
 			}
 			// Atomic store
-			latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_mo);
+			latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
 		}
 	}
 	// Releases the latch
 	template <modus_operandi mo>
-	void release_internal(int used_slot, lock_status mode, memory_order order) noexcept {
+	void release_internal(std::uint32_t used_slot, lock_status mode, memory_order order) noexcept {
 		// If we can release the latch in transactional mode, we are done.
 		if constexpr (tsx_rtm) {
 			if (release_internal_transactional(mode))
 				return;
 		}
-		
-		// Multi-slot mode
-		if constexpr (use_slots) {
-			if constexpr (mo == modus_operandi::shared_lock) {
-				// Shared-mode: Release the slot used to acquire the latch.
-				release_internal_slot<mo>(used_slot, mode, order);
-			}
-			else {
-				// Exclusive mode: Release all the slots that were used to acquire the latch.
-				for (std::uint32_t s=0; s<used_slot; ++s)
-					release_internal_slot<mo>(s, mode, order);
-			}
 
-			return;
-		}
-
-		// Single-slot release
-		return release_internal_slot<mo>(0, mode, order);
-	}
-	
-	// Revert pending lock
-	template <modus_operandi mo>
-	void revert_internal(int used_slot, lock_status mode, memory_order order) noexcept {
-		// Multi-slot mode
+		std::uint32_t slot = 0;
 		if constexpr (use_slots) {
-			if constexpr (mo != modus_operandi::shared_lock) {
-			}
+			// Multi-slot mode
+			slot = used_slot;
 		}
+		return release_internal_slot<mo>(slot, mode, order);
 	}
 
 public:
@@ -578,14 +583,11 @@ public:
 	 */
 	template <modus_operandi mo>
 	void release(latch_lock &&lock, memory_order order = memory_order::release) noexcept {
-		if (lock.mode == lock_status::not_acquired)
-			return;
+		if constexpr (shared_futex_detail::debug_shared_futex)
+			assert(lock);
 		
 		// Release and consume the lock
-		if (lock.mode != lock_status::pending)
-			release_internal<mo>(lock.slot_used, lock.mode, order);
-		else
-			revert_internal<mo>(lock.slot_used, lock.mode, order);
+		release_internal<mo>(lock.slot_used, lock.mode, order);
 		std::move(lock).reset();
 	}
 
