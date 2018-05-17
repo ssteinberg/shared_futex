@@ -18,6 +18,8 @@
 
 namespace ste {
 
+namespace shared_futex_detail {
+
 template <typename FutexPolicy, template <typename> class Latch>
 class shared_futex_t {
 public:
@@ -38,8 +40,9 @@ public:
 
 	auto &data() noexcept { return latch; }
 	const auto &data() const noexcept { return latch; }
-
 };
+
+}
 
 template <typename SharedFutex, typename LockingProtocol>
 class lock_guard {
@@ -183,16 +186,14 @@ public:
 	auto operator()() noexcept { return std::uniform_real_distribution<float>(.0f, 1.f)(gen.rand_engine); }
 };
 
-}
-
 /*
  *	@brief	Back-off protocol
  */
 template <typename Latch, typename BackoffPolicy, shared_futex_parking_policy parking_mode>
 struct shared_futex_backoff_protocol {
-	using backoff_result = shared_futex_detail::backoff_result;
-	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
-	using backoff_operation = shared_futex_detail::backoff_operation;
+	using backoff_result = backoff_result;
+	using backoff_aggressiveness = backoff_aggressiveness;
+	using backoff_operation = backoff_operation;
 	
 	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
 	
@@ -200,7 +201,7 @@ struct shared_futex_backoff_protocol {
 	 *	@brief	If returns true than it is the unparker duty to unregister from park counters, otherwise the unparked waiter does the
 	 *			unregistaration.
 	 */
-	template <shared_futex_detail::modus_operandi mo>
+	template <modus_operandi mo>
 	static constexpr bool is_unparker_responsible_for_unregistration() noexcept {
 		return Latch::parking_lot_t::template provides_accurate_unpark_count<mo>();
 	}
@@ -208,7 +209,7 @@ struct shared_futex_backoff_protocol {
 	/*
 	 *	@brief	Implements backoff protocol.
 	 */
-	template <shared_futex_detail::modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	template <modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
 	static backoff_result pause(Latch &l,
 								backoff_aggressiveness aggressiveness,
 								ParkPredicate &&park_predicate,
@@ -282,7 +283,7 @@ private:
 /*
  *	@brief	Locking protocol
  */
-template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, shared_futex_detail::modus_operandi mo>
+template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, modus_operandi mo>
 class shared_futex_locking_protocol {
 	using futex_policy = typename Latch::futex_policy;
 	using latch_descriptor = typename Latch::latch_descriptor;
@@ -293,17 +294,17 @@ public:
 
 private:
 	// Pre-thread random generator
-	static thread_local shared_futex_detail::random_generator rand;
+	static thread_local random_generator rand;
 	
 	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
 
 	// Helper values
 	enum class release_reason { failure, lock_release };
-	using unpark_tactic = shared_futex_detail::unpark_tactic;
-	using modus_operandi = shared_futex_detail::modus_operandi;
-	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
-	using acquisition_primality = shared_futex_detail::acquisition_primality;
-	using backoff_result = shared_futex_detail::backoff_result;
+	using unpark_tactic = unpark_tactic;
+	using modus_operandi = modus_operandi;
+	using backoff_aggressiveness = backoff_aggressiveness;
+	using acquisition_primality = acquisition_primality;
+	using backoff_result = backoff_result;
 	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
 
 	struct park_slot_t {
@@ -355,8 +356,8 @@ protected:
 				l.template register_unpark<mo_to_unpark>(unparked);
 		}
 
-		if constexpr (shared_futex_detail::collect_statistics)
-			++shared_futex_detail::debug_statistics.unparks;
+		if constexpr (collect_statistics)
+			++debug_statistics.unparks;
 
 		return unparked;
 	}
@@ -478,17 +479,17 @@ protected:
 		else
 			lock = l.template acquire<primality, mo>(validator);
 		
-		if constexpr (shared_futex_detail::collect_statistics) {
+		if constexpr (collect_statistics) {
 			if (!!lock) {
 				switch (mo) {
 				case modus_operandi::shared_lock:
-					++shared_futex_detail::debug_statistics.shared_locks;
+					++debug_statistics.shared_locks;
 					break;
 				case modus_operandi::upgradeable_lock:
-					++shared_futex_detail::debug_statistics.upgradeable_locks;
+					++debug_statistics.upgradeable_locks;
 					break;
 				default:
-					++shared_futex_detail::debug_statistics.exclusive_locks;
+					++debug_statistics.exclusive_locks;
 					break;
 				}
 			}
@@ -524,8 +525,8 @@ protected:
 		auto aggressiveness = select_backoff_protocol(rand_seed, l);
 
 		for (std::size_t iteration = 1;; ++iteration) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.iterations;
+			if constexpr (collect_statistics)
+				++debug_statistics.iterations;
 
 			// Once backoff policy decides to park us, register us as parked.
 			bool parked = false;
@@ -536,8 +537,8 @@ protected:
 				l.template register_unwait_and_park<mo>();
 				parked = true;
 				
-				if constexpr (shared_futex_detail::collect_statistics)
-					++shared_futex_detail::debug_statistics.lock_parks;
+				if constexpr (collect_statistics)
+					++debug_statistics.lock_parks;
 			};
 			// Execute back-off policy
 			const auto pause_result = backoff_protocol::template pause<mo>(l,
@@ -694,8 +695,10 @@ public:
 	[[nodiscard]] auto&& drop() && noexcept { return std::move(lock); }
 };
 
-template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, shared_futex_detail::modus_operandi mo>
-thread_local shared_futex_detail::random_generator shared_futex_locking_protocol<Latch, BackoffPolicy, ProtocolPolicy, mo>::rand;
+template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, modus_operandi mo>
+thread_local random_generator shared_futex_locking_protocol<Latch, BackoffPolicy, ProtocolPolicy, mo>::rand;
+
+}
 
 
 /*
@@ -703,13 +706,13 @@ thread_local shared_futex_detail::random_generator shared_futex_locking_protocol
  */
 template <typename BackoffPolicy, typename SharedFutex, typename... Args>
 lock_guard<
-	SharedFutex, 
-	shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::shared_lock>
+	SharedFutex,
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::shared_lock>
 > 
 make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
-		shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::shared_lock>
+		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::shared_lock>
 	>(l, std::forward<Args>(args)...);
 }
 
@@ -718,13 +721,13 @@ make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
  */
 template <typename BackoffPolicy, typename SharedFutex, typename... Args>
 lock_guard<
-	SharedFutex, 
-	shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::upgradeable_lock>
+	SharedFutex,
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::upgradeable_lock>
 > 
 make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
-		shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::upgradeable_lock>
+		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::upgradeable_lock>
 	>(l, std::forward<Args>(args)...);
 }
 
@@ -734,12 +737,12 @@ make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
 template <typename BackoffPolicy, typename SharedFutex, typename... Args>
 lock_guard<
 	SharedFutex, 
-	shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::exclusive_lock>
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::exclusive_lock>
 > 
 make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
-		shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_protocol_policy, shared_futex_detail::modus_operandi::exclusive_lock>
+		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::modus_operandi::exclusive_lock>
 	>(l, std::forward<Args>(args)...);
 }
 
@@ -752,7 +755,7 @@ make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 *	@return	An exclusive guard that owns the lock
 */
 template <typename BackoffPolicy, typename SharedFutex, typename P, typename B>
-auto upgrade_lock(lock_guard<SharedFutex, shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard) noexcept {
+auto upgrade_lock(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard) noexcept {
 	// Upgradeable guard owns lock?
 	assert(upgradeable_guard.owns_lock());
 
@@ -760,7 +763,7 @@ auto upgrade_lock(lock_guard<SharedFutex, shared_futex_locking_protocol<typename
 	auto latch_lock = std::move(upgradeable_guard).drop();
 
 	// Upgrade by consuming the upgradeable lock
-	shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::upgrade_to_exclusive_lock> upgrader;
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::upgrade_to_exclusive_lock> upgrader;
 	upgrader.try_lock_until(l.data(), std::move(latch_lock), std::chrono::steady_clock::time_point::max());
 	
 	// Adopt the lock with a new exclusive guard
@@ -777,8 +780,8 @@ auto upgrade_lock(lock_guard<SharedFutex, shared_futex_locking_protocol<typename
 *	@return	Returns a pair of a success flag and the new exclusive guard, if successful.
 */
 template <typename BackoffPolicy, typename SharedFutex, typename P, typename B, typename Clock, typename Duration>
-auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard, const std::chrono::time_point<Clock, Duration> &until) noexcept {
-	using exclusive_lock_guard = lock_guard<SharedFutex, shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::exclusive_lock>>;
+auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard, const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	using exclusive_lock_guard = lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::exclusive_lock>>;
 
 	// Upgradeable guard owns lock?
 	assert(upgradeable_guard.owns_lock());
@@ -787,7 +790,7 @@ auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_locking_protoco
 	auto latch_lock = std::move(upgradeable_guard).drop();
 
 	// Upgrade
-	shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::upgrade_to_exclusive_lock> upgrader;
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::modus_operandi::upgrade_to_exclusive_lock> upgrader;
 	if (!upgrader.try_lock_until(l.data(), std::move(latch_lock), until))
 		return std::make_pair(false, exclusive_lock_guard{});
 	
@@ -805,7 +808,7 @@ auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_locking_protoco
 *	@return	Returns a pair of a success flag and the new exclusive guard, if successful.
 */
 template <typename BackoffPolicy, typename SharedFutex, typename P, typename B, typename Rep, typename Period>
-auto try_upgrade_lock_for(lock_guard<SharedFutex, shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard, const std::chrono::duration<Rep, Period> &duration) noexcept {
+auto try_upgrade_lock_for(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::modus_operandi::upgradeable_lock>> &&upgradeable_guard, const std::chrono::duration<Rep, Period> &duration) noexcept {
 	const auto until = std::chrono::steady_clock::now() + duration;
 	return try_upgrade_lock_until<BackoffPolicy>(std::move(upgradeable_guard), until);
 }

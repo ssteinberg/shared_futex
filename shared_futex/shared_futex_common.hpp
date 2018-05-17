@@ -111,8 +111,6 @@ enum class unpark_tactic : std::uint8_t {
 	all,
 };
 
-}
-
 enum class shared_futex_parking_policy {
 	// Disallow parking
 	none,
@@ -122,3 +120,5 @@ enum class shared_futex_parking_policy {
 	// Trades latch memory for better performance during mixed contention workloads
 	shared_local
 };
+
+}
