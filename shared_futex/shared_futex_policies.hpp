@@ -65,19 +65,35 @@ struct shared_futex_default_policy {
 };
 
 /*
- *	@brief	Policy without parking or waiters counters, used to fit a futex into 8-bits.
+ *	@brief	Policy without parking or waiters counters, used to fit a futex into 32-bits.
  */
-struct shared_futex_pico_policy {
+struct shared_futex_micro_policy {
 	static constexpr std::size_t alignment = 1;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 6;
+	static constexpr std::size_t shared_bits = 15;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
 	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
 	static constexpr bool count_waiters = false;
 	using features = std::tuple<>;
+};
+
+/*
+ *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 32-bits.
+ */
+struct shared_futex_micro_tsx_hle_policy {
+	static constexpr std::size_t alignment = 1;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 15;
+	static constexpr std::size_t upgradeable_bits = 1;
+	static constexpr std::size_t exclusive_bits = 1;
+
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr bool count_waiters = false;
+	using features = std::tuple<shared_futex_features::use_transactional_hle_exclusive>;
 };
 
 /*
