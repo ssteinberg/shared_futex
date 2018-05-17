@@ -15,10 +15,11 @@ namespace ste::shared_futex_detail {
 
 // Latch data storage.
 // Multi-slot specialization
-template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, int slots = 1>
+template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, std::uint32_t slots = 1>
 struct latch_storage {
 	static_assert(slots > 1);
 
+	using slot_type = decltype(slots);
 	static constexpr auto count = slots;
 
 	struct slot_t {
@@ -31,7 +32,7 @@ struct latch_storage {
 	// Slots
 	std::array<slot_t, slots> latch_slots{};
 	// Slot counter
-	atomic_tsx<std::uint32_t> active_slots{ 1 };
+	atomic_tsx<slot_type> active_slots{ 1 };
 
 	// Parking/waiters counters
 	waiters_type waiters{};
