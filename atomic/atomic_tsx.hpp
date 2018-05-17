@@ -55,6 +55,12 @@ memory_order inline memory_order_store(memory_order order) noexcept {
 	return order;
 }
 
+// Checks if atomic_tsx<T> is a valid instantiation.
+// True for T that is trivial and is 32/64-bit of size.
+template <typename T>
+static constexpr bool is_atomic_tsx_capable_v = std::is_trivial_v<T> && (sizeof(T) == 4 || sizeof(T) == 8);
+
+
 namespace _atomic_tsx_detail {
 
 struct memory_order_helper {
@@ -96,7 +102,7 @@ class atomic_tsx {
 	static_assert(std::atomic<T>::is_always_lock_free, "Only supported for lock-free atomics");
 
 	static constexpr auto size = sizeof(T);
-	static_assert(size == 4 || size == 8, "Only supported on 32/64-bit variables");
+	static_assert(is_atomic_tsx_capable_v<T>, "Only supported on 32/64-bit variables");
 	static constexpr bool is64wide = size == 8;
 
 	using intrinsic_hle_type = std::conditional_t<size == 4, long, long long>;
