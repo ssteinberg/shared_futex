@@ -81,8 +81,11 @@ private:
 	enum class lock_contention { none, contended };
 
 	enum class internal_acquisition_flags {
-		none = 0, 
-		skip_transactional = 1 << 0
+		none = 0,
+		// Disables transactional features
+		skip_transactional = 1 << 0,
+		// Upgrading an already upgraded latch returns successfully without modifying the latch
+		allow_upgrading_upgraded_latch = 1 << 1,
 	};
 	friend constexpr internal_acquisition_flags operator|(const internal_acquisition_flags &lhs, const internal_acquisition_flags &rhs) noexcept {
 		using T = std::underlying_type_t<internal_acquisition_flags>;
@@ -99,8 +102,9 @@ private:
 	static constexpr bool has_waiters_counter = count_waiters || parking_allowed;
 	static constexpr bool count_shared_parked = true;
 
+	using slot_type = std::uint32_t;
 	static constexpr std::size_t slot_count = use_slots ? 8 : 1;
-	static constexpr std::uint32_t primary_slot = 0;
+	static constexpr slot_type primary_slot = 0;
 
 public:
 	// Represents a latch lock. A valid object holds a lock and should be released by consuming the object with a call to latch's release().
@@ -274,7 +278,7 @@ private:
 		shared_futex_detail::acquisition_primality primality, modus_operandi mo, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
-	[[nodiscard]] std::pair<lock_status, lock_contention> acquire_internal_slot(std::uint32_t slot, Validator &&validator, memory_order order) noexcept {
+	[[nodiscard]] std::pair<lock_status, lock_contention> acquire_internal_slot(slot_type slot, Validator &&validator, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<mo>();
 		if constexpr (method == latch_acquisition_method::counter ||
 					  method == latch_acquisition_method::cxhg) {
@@ -287,6 +291,14 @@ private:
 			// If we successfully exchange singular value with desired latch value, we are done.
 			if (latch[slot]->compare_exchange_strong(expected, static_cast<latch_data_type>(desired_latch), order))
 				return { lock_status::acquired, lock_contention::none };
+			
+			// If we are upgrading the latch and the allow-upgrading-upgraded flag is set then upgrading a latch that has already been upgraded is
+			// allowed.
+			if constexpr (mo == modus_operandi::upgrade_to_exclusive_lock &&
+				(flags & internal_acquisition_flags::allow_upgrading_upgraded_latch) != internal_acquisition_flags::none) {
+				if (expected == static_cast<latch_data_type>(desired_latch))
+					return { lock_status::acquired, lock_contention::none };
+			}
 
 			// Otherwise keep trying to write desired/increase counter while previous latch value is valid for acquisition
 			while (validator(latch_descriptor{ expected })) {
@@ -325,8 +337,8 @@ private:
 	template <shared_futex_detail::acquisition_primality primality, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_shared(Validator &&validator, memory_order order) noexcept {
 		// Choose a slot at random from active slots.
-		const std::uint32_t active_slots = latch.active_slots.load();
-		const std::uint32_t slot = __rdtsc() % active_slots;
+		const slot_type active_slots = latch.active_slots.load();
+		const slot_type slot = __rdtsc() % active_slots;
 		assert(active_slots <= latch_storage_t::count);
 
 		// Attempt acquire
@@ -362,30 +374,36 @@ private:
 		const auto acquire_order = memory_order_load(order);
 
 		// Attempt to acquire primary slot first
-		const auto primary_status = acquire_internal_slot<primality, mo>(primary_slot, validator, order).first;
+		static constexpr auto flags = mo == modus_operandi::upgrade_to_exclusive_lock ? 
+			internal_acquisition_flags::allow_upgrading_upgraded_latch :
+			internal_acquisition_flags::none;
+		const auto primary_status = acquire_internal_slot<primality, mo, flags>(primary_slot,
+																				validator,
+																				order).first;
 		if (primary_status == lock_status::not_acquired)
 			return {};
 		// If lock is acquired in transactional mode, we are done
 		if (primary_status == lock_status::transaction)
 			return { primary_status };
 
+		// Upgradeable locks are not mutually exclusive with shared locks, done.
+		if constexpr (mo == modus_operandi::upgradeable_lock)
+			return { primary_status };
+
 		// We have acquired primary slot, so there're possibly only shared lockers to contend with on non-primary slots.
-		// Kill concurrency by setting active slot count to 1. We hold primary latch, so effectively we are the only one mutating active_slots.
+		// Kill concurrency by setting active slot count to 1.
 		const auto active_slots = latch.active_slots.exchange(1, order);
 		assert(active_slots <= latch_storage_t::count);
 
 		// Check if the rest of the slots are valid
-		// (Upgradeable locks are not mutually exclusive with shared locks)
 		bool success = true;
-		if constexpr (mo != modus_operandi::upgradeable_lock) {
-			for (std::uint32_t s = 0; s < active_slots; ++s) {
-				if (s == primary_slot)
-					continue;
-				const auto latch_value = latch[s]->load(acquire_order);
-				if (!validator(latch_descriptor{ latch_value })) {
-					success = false;
-					break;
-				}
+		for (slot_type s = 0; s < active_slots; ++s) {
+			if (s == primary_slot)
+				continue;
+			const auto latch_value = latch[s]->load(acquire_order);
+			if (!validator(latch_descriptor{ latch_value })) {
+				success = false;
+				break;
 			}
 		}
 		
@@ -394,7 +412,9 @@ private:
 			return { primary_status };
 
 		// Failure. Revert primary slot.
-		release_internal_slot<mo>(primary_slot, primary_status, order);
+		if constexpr (mo != modus_operandi::upgrade_to_exclusive_lock) {
+			release_internal_slot<mo>(primary_slot, primary_status, order);
+		}
 		return {};
 	}
 	// Attempts lock acquisition
@@ -402,7 +422,7 @@ private:
 		shared_futex_detail::acquisition_primality primality, modus_operandi mo, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
-	[[nodiscard]] latch_lock acquire_internal(Validator &&validator, memory_order order) noexcept {
+	[[nodiscard]] latch_lock acquire_internal(const latch_lock &upgrading_lock, Validator &&validator, memory_order order) noexcept {
 		// If transactional is enabled we attempt a lock-elision only if this is an initial acquisition attempt and skip_transactional flag is 
 		// unset.
 		if constexpr (tsx_rtm && primality == shared_futex_detail::acquisition_primality::initial &&
@@ -442,7 +462,7 @@ private:
 	}
 	// Release a slot
 	template <modus_operandi mo>
-	void release_internal_slot(std::uint32_t slot, lock_status mode, memory_order order) noexcept {
+	void release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<mo>();
 		const auto store_order = memory_order_store(order);
 
@@ -496,14 +516,14 @@ private:
 	}
 	// Releases the latch
 	template <modus_operandi mo>
-	void release_internal(std::uint32_t used_slot, lock_status mode, memory_order order) noexcept {
+	void release_internal(slot_type used_slot, lock_status mode, memory_order order) noexcept {
 		// If we can release the latch in transactional mode, we are done.
 		if constexpr (tsx_rtm) {
 			if (release_internal_transactional(mode))
 				return;
 		}
 
-		std::uint32_t slot = primary_slot;
+		auto slot = primary_slot;
 		if constexpr (use_slots) {
 			// Multi-slot mode
 			slot = used_slot;
@@ -557,7 +577,7 @@ public:
 		typename = std::enable_if_t<mo != modus_operandi::upgrade_to_exclusive_lock>
 	>
 	[[nodiscard]] latch_lock acquire(Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
-		return acquire_internal<primality, mo>(std::forward<Validator>(validator), order);
+		return acquire_internal<primality, mo>({}, std::forward<Validator>(validator), order);
 	}
 	
 	/*
@@ -584,7 +604,8 @@ public:
 		}
 
 		// Otherwise upgrade normally but disallow transactions.
-		auto upgraded_lock = acquire_internal<primality, mo, internal_acquisition_flags::skip_transactional>(std::forward<Validator>(validator), 
+		auto upgraded_lock = acquire_internal<primality, mo, internal_acquisition_flags::skip_transactional>(lock,
+																											 std::forward<Validator>(validator), 
 																											 order);
 		if (upgraded_lock)
 			std::move(lock).reset();

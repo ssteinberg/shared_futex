@@ -15,10 +15,11 @@ namespace ste::shared_futex_detail {
 
 // Latch data storage.
 // Multi-slot specialization
-template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, int slots = 1>
+template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, std::uint32_t slots = 1>
 struct latch_storage {
 	static_assert(slots > 1);
 
+	using slot_type = decltype(slots);
 	static constexpr auto count = slots;
 
 	struct slot_t {
@@ -31,7 +32,7 @@ struct latch_storage {
 	// Slots
 	std::array<slot_t, slots> latch_slots{};
 	// Slot counter
-	atomic_tsx<std::uint32_t> active_slots{ 1 };
+	atomic_tsx<slot_type> active_slots{ 1 };
 
 	// Parking/waiters counters
 	waiters_type waiters{};
@@ -73,7 +74,7 @@ struct latch_storage<false, waiters_type, latch_type, alignment, 1> {
 };
 
 
-template <typename T, typename Data, shared_futex_parking_policy parking_policy>
+template <typename T, typename Data, bool compact, shared_futex_parking_policy parking_policy>
 struct latch_descriptor_storage {
 	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 4;
 
@@ -82,10 +83,21 @@ struct latch_descriptor_storage {
 	T _unused					: 2;
 	T shared_consumers			: shared_consumers_bits;
 };
+template <typename T, typename Data, shared_futex_parking_policy parking_policy>
+struct latch_descriptor_storage<T, Data, true, parking_policy> {
+	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 2;
+
+	T lock_held_flag_bit		: 1;
+	T upgradeable_consumers		: 1;
+	T shared_consumers			: shared_consumers_bits;
+};
 template <typename T, shared_futex_parking_policy parking_policy>
 class latch_descriptor {
+	// We force a compact latch storage if T is smaller than 32-bit.
+	static constexpr bool use_compact_latch_storage = sizeof(T) < 4;
+
 	using counter_t = std::make_unsigned_t<T>;
-	using storage_t = latch_descriptor_storage<counter_t, T, parking_policy>;
+	using storage_t = latch_descriptor_storage<counter_t, T, use_compact_latch_storage, parking_policy>;
 
 	static constexpr auto lock_held_bit_index = 0;
 	static constexpr auto shared_consumers_bits = storage_t::shared_consumers_bits;

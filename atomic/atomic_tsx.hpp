@@ -25,7 +25,7 @@ enum class memory_order {
 	acq_rel = std::memory_order_acq_rel,
 	seq_cst = std::memory_order_seq_cst,
 
-	// Deprecated in c++17
+	// Deprecated under c++17
 	consume [[deprecated]] = std::memory_order_consume,
 
 	xacquire = std::memory_order_acquire | 0x10000,

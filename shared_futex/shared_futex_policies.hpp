@@ -58,10 +58,58 @@ struct shared_futex_default_policy {
 
 	// Specifies thread parking policy
 	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
-	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, as a const of a small overhead.
+	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, at the cost of a small overhead.
 	static constexpr bool count_waiters = true;
 	// List of requested featrues, see namespace shared_futex_features.
 	using features = std::tuple<>;
+};
+
+/*
+ *	@brief	Policy without parking or waiters counters, used to fit a futex into 8-bits.
+ */
+struct shared_futex_pico_policy {
+	static constexpr std::size_t alignment = 1;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 6;
+	static constexpr std::size_t upgradeable_bits = 1;
+	static constexpr std::size_t exclusive_bits = 1;
+
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr bool count_waiters = false;
+	using features = std::tuple<>;
+};
+
+/*
+ *	@brief	Policy with TSX RTM feature
+ */
+struct shared_futex_tsx_rtm_policy {
+	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t upgradeable_bits = 10;
+	static constexpr std::size_t exclusive_bits = 10;
+
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
+	static constexpr bool count_waiters = true;
+	using features = std::tuple<shared_futex_features::use_transactional_rtm>;
+};
+
+/*
+ *	@brief	Policy with multi-slot feature
+ */
+struct shared_futex_multi_slot_policy {
+	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t upgradeable_bits = 10;
+	static constexpr std::size_t exclusive_bits = 10;
+
+	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
+	static constexpr bool count_waiters = true;
+	using features = std::tuple<shared_futex_features::use_slots>;
 };
 
 
