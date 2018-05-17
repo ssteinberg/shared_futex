@@ -15,9 +15,7 @@
 #include <utility>
 #include <intrin.h>
 
-namespace ste {
-
-namespace shared_futex_detail {
+namespace ste::shared_futex_detail {
 
 struct features_helper {
 	template <typename SupportedFeaturesTuple, typename... RequestedFeatures>
@@ -29,8 +27,6 @@ struct features_helper {
 		return (std::is_same_v<Feature, RequestedFeatures> || ...);
 	}
 };
-
-}
 
 /*
  *	@brief	shared_futex's latch
@@ -47,13 +43,13 @@ public:
 	>;
 	
 private:
-	static_assert(shared_futex_detail::features_helper::check_supports_all<supported_features>(futex_policy::features{}), 
+	static_assert(features_helper::check_supports_all<supported_features>(futex_policy::features{}), 
 				  "futex_policy::features contains unsupported features, see supported_features.");
 
 	// Checks if the futex's Features list contains Feature
 	template <typename Feature>
 	static constexpr bool requires_feature() noexcept {
-		return shared_futex_detail::features_helper::requires_feature<Feature>(futex_policy::features{});
+		return features_helper::requires_feature<Feature>(futex_policy::features{});
 	}
 
 public:
@@ -66,8 +62,8 @@ public:
 	static constexpr bool use_slots = requires_feature<shared_futex_features::use_slots>();
 
 private:
-	using modus_operandi = shared_futex_detail::modus_operandi;
-	using unpark_tactic = shared_futex_detail::unpark_tactic;
+	using modus_operandi = modus_operandi;
+	using unpark_tactic = unpark_tactic;
 	enum class latch_acquisition_method : std::uint8_t {
 		set_flag, 
 		cxhg, 
@@ -138,13 +134,13 @@ public:
 	using waiters_counter_type = std::int64_t;
 	using parking_key_t = std::uint64_t;
 	
-	using latch_descriptor = shared_futex_detail::latch_descriptor<latch_data_type, futex_policy::parking_policy>;
-	using waiters_descriptor = shared_futex_detail::waiters_descriptor<
+	using latch_descriptor = latch_descriptor<latch_data_type, futex_policy::parking_policy>;
+	using waiters_descriptor = waiters_descriptor<
 		waiters_counter_type,
 		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
 		count_shared_parked, count_waiters
 	>;
-	using parking_lot_t = shared_futex_detail::shared_futex_parking<futex_policy::parking_policy>;
+	using parking_lot_t = shared_futex_parking<futex_policy::parking_policy>;
 	
 	static constexpr auto alignment = std::max(futex_policy::alignment, alignof(std::max_align_t));
 
@@ -159,7 +155,7 @@ private:
 	static_assert(latch_atomic_t::is_always_lock_free, "Latch is not lock-free!");
 	static_assert(waiters_atomic_t::is_always_lock_free, "Latch waiter counter is not lock-free!");
 
-	using latch_storage_t = shared_futex_detail::latch_storage<
+	using latch_storage_t = latch_storage<
 		has_waiters_counter,
 		waiters_atomic_t,
 		latch_atomic_t,
@@ -228,8 +224,8 @@ private:
 	[[nodiscard]] latch_lock acquire_internal_transactional() noexcept {
 		static constexpr auto max_tsx_retries = 3;
 		
-		if constexpr (shared_futex_detail::collect_statistics)
-			++shared_futex_detail::debug_statistics.transactional_lock_elision_attempts;
+		if constexpr (collect_statistics)
+			++debug_statistics.transactional_lock_elision_attempts;
 
 		transactional_memory::status tsx_start;
 		const auto tsx_start_has_flag = [&](const transactional_memory::status f) {
@@ -250,24 +246,24 @@ private:
 					  
 		// Transaction failed.
 
-		if constexpr (shared_futex_detail::collect_statistics) {
+		if constexpr (collect_statistics) {
 			// Log transaction failure
 			if (tsx_start_has_flag(transactional_memory::status::abort_system))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_sys;
+				++debug_statistics.transactional_lock_elision_aborts_sys;
 			if (tsx_start_has_flag(transactional_memory::status::abort_capacity))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_capacity;
+				++debug_statistics.transactional_lock_elision_aborts_capacity;
 			if (tsx_start_has_flag(transactional_memory::status::abort_conflict))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_conflict;
+				++debug_statistics.transactional_lock_elision_aborts_conflict;
 			if (tsx_start_has_flag(transactional_memory::status::abort_debug))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_debug;
+				++debug_statistics.transactional_lock_elision_aborts_debug;
 			if (tsx_start_has_flag(transactional_memory::status::abort_explicit))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_explicit;
+				++debug_statistics.transactional_lock_elision_aborts_explicit;
 			if (tsx_start_has_flag(transactional_memory::status::abort_nested))
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_nested;
+				++debug_statistics.transactional_lock_elision_aborts_nested;
 			if (tsx_start == transactional_memory::status::abort_retry)
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_too_many_retries;
+				++debug_statistics.transactional_lock_elision_aborts_too_many_retries;
 			if (tsx_start == transactional_memory::status::abort_unknown)
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_aborts_other;
+				++debug_statistics.transactional_lock_elision_aborts_other;
 		}
 
 		return {};
@@ -275,7 +271,7 @@ private:
 	// Attempts latch slot acquisition
 	// Returns result and lock contention hint
 	template <
-		shared_futex_detail::acquisition_primality primality, modus_operandi mo, 
+		acquisition_primality primality, modus_operandi mo, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
 	[[nodiscard]] std::pair<lock_status, lock_contention> acquire_internal_slot(slot_type slot, Validator &&validator, memory_order order) noexcept {
@@ -285,8 +281,8 @@ private:
 			auto expected = static_cast<latch_data_type>(singular_latch_state_for_mo<mo>());
 			auto desired_latch = latch_descriptor::template make_locked<mo>();
 						  
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			// If we successfully exchange singular value with desired latch value, we are done.
 			if (latch[slot]->compare_exchange_strong(expected, static_cast<latch_data_type>(desired_latch), order))
@@ -306,20 +302,20 @@ private:
 				desired_latch.set_lock_held_flag();
 				desired_latch.template inc_consumers<mo>(1);
 				
-				if constexpr (shared_futex_detail::collect_statistics)
-					++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+				if constexpr (collect_statistics)
+					++debug_statistics.lock_rmw_instructions;
 
 				if (latch[slot]->compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order))
 					return { lock_status::acquired, lock_contention::contended };
 			}
 		}
 		else /*(method == latch_acquisition_method::set_flag)*/ {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			// Bit-test-and-set
 			const auto bit = latch_descriptor::lock_held_bit_index;
-			if constexpr (tsx_hle_exclusive && primality == shared_futex_detail::acquisition_primality::initial) {
+			if constexpr (tsx_hle_exclusive && primality == acquisition_primality::initial) {
 				// xacquire for transactional hardware-lock-elision
 				if (!latch[slot]->bit_test_and_set(bit, memory_order::xacquire))
 					return { lock_status::transaction, lock_contention::contended };
@@ -334,7 +330,7 @@ private:
 		return { lock_status::not_acquired, lock_contention::contended };
 	}
 	// Attempts lock acquisition, multi-slot shared logic.
-	template <shared_futex_detail::acquisition_primality primality, typename Validator>
+	template <acquisition_primality primality, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_shared(Validator &&validator, memory_order order) noexcept {
 		// Choose a slot at random from active slots.
 		const slot_type active_slots = latch.active_slots.load();
@@ -369,7 +365,7 @@ private:
 		return {};
 	}
 	// Attempts lock acquisition, multi-slot non-shared logic.
-	template <shared_futex_detail::acquisition_primality primality, modus_operandi mo, typename Validator>
+	template <acquisition_primality primality, modus_operandi mo, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_nonshared(Validator &&validator, memory_order order) noexcept {
 		const auto acquire_order = memory_order_load(order);
 
@@ -419,13 +415,13 @@ private:
 	}
 	// Attempts lock acquisition
 	template <
-		shared_futex_detail::acquisition_primality primality, modus_operandi mo, 
+		acquisition_primality primality, modus_operandi mo, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
 	[[nodiscard]] latch_lock acquire_internal(const latch_lock &upgrading_lock, Validator &&validator, memory_order order) noexcept {
 		// If transactional is enabled we attempt a lock-elision only if this is an initial acquisition attempt and skip_transactional flag is 
 		// unset.
-		if constexpr (tsx_rtm && primality == shared_futex_detail::acquisition_primality::initial &&
+		if constexpr (tsx_rtm && primality == acquisition_primality::initial &&
 					  (flags & internal_acquisition_flags::skip_transactional) == internal_acquisition_flags::none) {
 			auto lock = acquire_internal_transactional();
 			if (lock)
@@ -450,8 +446,8 @@ private:
 	bool release_internal_transactional(lock_status mode) noexcept {
 		if (mode == lock_status::transaction) {
 			// Finalize the transaction.
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.transactional_lock_elision_success;
+			if constexpr (collect_statistics)
+				++debug_statistics.transactional_lock_elision_success;
 
 			_xend();
 			return true;
@@ -480,8 +476,8 @@ private:
 				static constexpr auto shared_holders_for_atomic_add = 2;
 
 				 if (latch_descriptor{ expected }.template consumers<mo>() >= shared_holders_for_atomic_add) {
-				 	if constexpr (shared_futex_detail::collect_statistics)
-				 		++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+				 	if constexpr (collect_statistics)
+				 		++debug_statistics.lock_rmw_instructions;
     
 				 	const auto new_val = latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
 				 	if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
@@ -492,8 +488,8 @@ private:
 			}
 
 			do {
-				if constexpr (shared_futex_detail::collect_statistics)
-					++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+				if constexpr (collect_statistics)
+					++debug_statistics.lock_rmw_instructions;
 
 				// Calculate new desired value
 				desired_latch = latch_descriptor{ expected - single_consumer_bits };
@@ -543,18 +539,18 @@ public:
 	}
 
 	latch_descriptor load(memory_order order = memory_order::acquire) const noexcept {
-		if constexpr (shared_futex_detail::collect_statistics) {
+		if constexpr (collect_statistics) {
 			if (order != memory_order::relaxed)
-				++shared_futex_detail::debug_statistics.lock_atomic_loads;
+				++debug_statistics.lock_atomic_loads;
 		}
 
 		return latch_descriptor{ latch[primary_slot]->load(order) };
 	}
 	waiters_descriptor load_waiters_counters(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (has_waiters_counter) {
-			if constexpr (shared_futex_detail::collect_statistics) {
+			if constexpr (collect_statistics) {
 				if (order != memory_order::relaxed)
-					++shared_futex_detail::debug_statistics.lock_atomic_loads;
+					++debug_statistics.lock_atomic_loads;
 			}
 
 			return waiters_descriptor{ latch.waiters.load(order) };
@@ -573,7 +569,7 @@ public:
 	 *			that should be consumed when unlocking by a call to release().
 	 */
 	template <
-		shared_futex_detail::acquisition_primality primality, modus_operandi mo, typename Validator,
+		acquisition_primality primality, modus_operandi mo, typename Validator,
 		typename = std::enable_if_t<mo != modus_operandi::upgrade_to_exclusive_lock>
 	>
 	[[nodiscard]] latch_lock acquire(Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
@@ -590,7 +586,7 @@ public:
 	 *	@return	Returns a pair of a boolean indicating whether the acquisition was successful and, on successful acquisitions, a lock object
 	 *			that should be consumed when unlocking by a call to release().
 	 */
-	template <shared_futex_detail::acquisition_primality primality, typename Validator>
+	template <acquisition_primality primality, typename Validator>
 	[[nodiscard]] latch_lock upgrade(latch_lock &&lock, Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
 		static constexpr modus_operandi mo = modus_operandi::upgrade_to_exclusive_lock;
 
@@ -620,7 +616,7 @@ public:
 	 */
 	template <modus_operandi mo>
 	void release(latch_lock &&lock, memory_order order = memory_order::release) noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex)
+		if constexpr (debug_shared_futex)
 			assert(lock);
 		
 		// Release and consume the lock
@@ -637,7 +633,7 @@ public:
 	parking_lot_wait_state park(ParkPredicate &&park_predicate,
 								OnPark &&on_park,
 								const std::chrono::time_point<Clock, Duration> &until) noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex)
+		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 
 		if constexpr (mo == modus_operandi::shared_lock &&
@@ -664,7 +660,7 @@ public:
 	 */
 	template <unpark_tactic tactic, modus_operandi mo>
 	std::size_t unpark() noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex)
+		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 
 		if constexpr (mo == modus_operandi::shared_lock &&
@@ -684,8 +680,8 @@ public:
 	template <modus_operandi mo>
 	void register_wait(memory_order order = memory_order::release) noexcept {
 		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
 			d.template inc_waiters<mo>(1);
@@ -697,8 +693,8 @@ public:
 	template <modus_operandi mo>
 	void register_unwait(memory_order order = memory_order::release) noexcept {
 		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
 			d.template inc_waiters<mo>(1);
@@ -709,12 +705,12 @@ public:
 	// Registers parked thread
 	template <modus_operandi mo>
 	void register_unwait_and_park(memory_order order = memory_order::release) noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex)
+		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 		
 		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			waiters_counter_type bits = 0;
 			if constexpr (should_count_parked<mo>()) {
@@ -735,12 +731,12 @@ public:
 	// Unregister parked and register as waiter
 	template <modus_operandi mo>
 	void register_unpark_and_wait(memory_order order = memory_order::release) noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex)
+		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 		
 		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			waiters_counter_type bits = 0;
 			if constexpr (should_count_parked<mo>()) {
@@ -761,14 +757,14 @@ public:
 	// Unregister parked thread(s)
 	template <modus_operandi mo>
 	void register_unpark(std::size_t count = 1, memory_order order = memory_order::release) noexcept {
-		if constexpr (shared_futex_detail::debug_shared_futex) {
+		if constexpr (debug_shared_futex) {
 			assert(parking_allowed && "Parking not allowed");
 			assert(count && "Count must be positive");
 		}
 		
 		if constexpr (should_count_parked<mo>()) {
-			if constexpr (shared_futex_detail::collect_statistics)
-				++shared_futex_detail::debug_statistics.lock_rmw_instructions;
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
 			d.template inc_parked<mo>(count);
