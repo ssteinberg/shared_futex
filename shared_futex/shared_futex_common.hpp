@@ -72,11 +72,11 @@ static constexpr bool collect_statistics = false;
 #endif
 
 
-enum class modus_operandi : std::uint8_t {
-	shared_lock,
-	upgradeable_lock,
-	exclusive_lock,
-	upgrade_to_exclusive_lock,
+enum class operation : std::uint8_t {
+	lock_shared,
+	lock_upgradeable,
+	lock_exclusive,
+	upgrade,
 };
 
 enum class backoff_operation : std::uint8_t {
@@ -111,8 +111,6 @@ enum class unpark_tactic : std::uint8_t {
 	all,
 };
 
-}
-
 enum class shared_futex_parking_policy {
 	// Disallow parking
 	none,
@@ -122,3 +120,5 @@ enum class shared_futex_parking_policy {
 	// Trades latch memory for better performance during mixed contention workloads
 	shared_local
 };
+
+}

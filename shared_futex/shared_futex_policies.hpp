@@ -31,6 +31,7 @@ struct use_slots {};
 
 }
 
+namespace shared_futex_policies {
 
 /*
  *	@brief	Policy of shared_futex's data storage
@@ -40,7 +41,7 @@ struct shared_futex_default_policy {
 	 *	Locking variable storage policies
 	 */
 
-	// Futex alignment
+	 // Futex alignment
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
 	// Latch data type
 	using latch_data_type = std::uint32_t;
@@ -56,8 +57,8 @@ struct shared_futex_default_policy {
 	 *	Futex behaviour policies
 	 */
 
-	// Specifies thread parking policy
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
+	 // Specifies thread parking policy
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::shared_local;
 	// Disables/enables waiters counting. Counting waiters increases performance during heavier contention, at the cost of a small overhead.
 	static constexpr bool count_waiters = true;
 	// List of requested featrues, see namespace shared_futex_features.
@@ -75,7 +76,7 @@ struct shared_futex_micro_policy {
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::none;
 	static constexpr bool count_waiters = false;
 	using features = std::tuple<>;
 };
@@ -91,7 +92,7 @@ struct shared_futex_micro_tsx_hle_policy {
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::none;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::none;
 	static constexpr bool count_waiters = false;
 	using features = std::tuple<shared_futex_features::use_transactional_hle_exclusive>;
 };
@@ -107,7 +108,7 @@ struct shared_futex_tsx_rtm_policy {
 	static constexpr std::size_t upgradeable_bits = 10;
 	static constexpr std::size_t exclusive_bits = 10;
 
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
 	static constexpr bool count_waiters = true;
 	using features = std::tuple<shared_futex_features::use_transactional_rtm>;
 };
@@ -123,7 +124,7 @@ struct shared_futex_multi_slot_policy {
 	static constexpr std::size_t upgradeable_bits = 10;
 	static constexpr std::size_t exclusive_bits = 10;
 
-	static constexpr shared_futex_parking_policy parking_policy = shared_futex_parking_policy::shared_local;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::shared_local;
 	static constexpr bool count_waiters = true;
 	using features = std::tuple<shared_futex_features::use_slots>;
 };
@@ -139,15 +140,15 @@ struct spinlock_backoff_policy {
 
 	static constexpr std::size_t max_spin_count = 10;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
-	static constexpr backoff_operation select_operation(std::size_t iteration, backoff_aggressiveness, float, 
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
+	static constexpr backoff_operation select_operation(std::size_t iteration, backoff_aggressiveness, float,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if ((iteration % 100) == 0 &&
 			until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
 			return backoff_operation::timeout;
 		return backoff_operation::spin;
 	}
-	template <shared_futex_detail::modus_operandi>
+	template <shared_futex_detail::operation>
 	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept {
 		const auto rdtsc = __rdtsc();
 		return (rdtsc % 48) + 32;
@@ -156,8 +157,8 @@ struct spinlock_backoff_policy {
 
 /*
  *	@brief	Spins, yields and then parks.
- *			A spin cycle will take ~4 ns, a context-switch ~1000ns and a park will cost multiple thousands ns and more in case 
- *			of contention on the parking slot. Therefore this implementation is essentially an exponential backoff policy, which is a 
+ *			A spin cycle will take ~4 ns, a context-switch ~1000ns and a park will cost multiple thousands ns and more in case
+ *			of contention on the parking slot. Therefore this implementation is essentially an exponential backoff policy, which is a
  *			well studied approach to find an acceptable balance between contending processes and reduce number of collisions.
  *			Employs cross-thread symmetry-breaking spinning logic.
  */
@@ -165,8 +166,8 @@ struct exponential_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
-	static constexpr backoff_operation select_operation(std::size_t iteration, float, 
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
+	static constexpr backoff_operation select_operation(std::size_t iteration, float,
 														backoff_aggressiveness aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		const auto s = spin_iterations(aggressiveness);
@@ -180,7 +181,7 @@ struct exponential_backoff_policy {
 		// Check timeout
 		if (until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
 			return backoff_operation::timeout;
-		
+
 		// Yield
 		if (iteration <= s + y || do_not_park)
 			return backoff_operation::yield;
@@ -188,7 +189,7 @@ struct exponential_backoff_policy {
 		// Park
 		return backoff_operation::park;
 	}
-	template <shared_futex_detail::modus_operandi>
+	template <shared_futex_detail::operation>
 	static std::size_t spin_count(std::size_t iteration, float, backoff_aggressiveness aggressiveness) noexcept {
 		// Calculate spin count
 		const auto x = static_cast<float>(iteration - 1);
@@ -203,15 +204,15 @@ struct exponential_backoff_policy {
 
 private:
 	static constexpr float sqrt_spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
-		return aggressiveness == backoff_aggressiveness::aggressive ? 
+		return aggressiveness == backoff_aggressiveness::aggressive ?
 			16.f :   // ~900 pause instructions, on the scale of ~3 microseconds
 			32.f;    // ~500 pause instructions, on the scale of ~2 microseconds
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
-		return 
-			aggressiveness == backoff_aggressiveness::aggressive ? 128 : 
-			aggressiveness == backoff_aggressiveness::normal     ? 96 :
-			aggressiveness == backoff_aggressiveness::relaxed    ? 32 : 
+		return
+			aggressiveness == backoff_aggressiveness::aggressive ? 128 :
+			aggressiveness == backoff_aggressiveness::normal ? 96 :
+			aggressiveness == backoff_aggressiveness::relaxed ? 32 :
 			0;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
@@ -235,10 +236,10 @@ private:
 struct relaxed_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
-	
+
 	static constexpr int yield_iterations = 5;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
 	static constexpr backoff_operation select_operation(std::size_t iteration, float, backoff_aggressiveness aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if (until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
@@ -250,8 +251,8 @@ struct relaxed_backoff_policy {
 		// Otherwise park
 		return backoff_operation::park;
 	}
-	template <shared_futex_detail::modus_operandi>
-	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept { return 0;}
+	template <shared_futex_detail::operation>
+	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept { return 0; }
 };
 
 
@@ -270,10 +271,12 @@ struct shared_futex_protocol_policy {
 	static constexpr auto refresh_backoff_protocol_every_iterations = 0;
 	// If set to true, iteration counter will be reset after an unpark, causing the waiter to restart its backoff policy.
 	static constexpr bool reset_iterations_count_after_unpark = false;
-	
+
 	// When looking for candidates to unpark, we unpark a waiter if count of active waiters, that might block said waiter, is lower than 
 	// this threshold.
 	static constexpr auto active_waiters_count_thershold_for_unpark = 0;
 };
+
+}
 
 }
