@@ -15,7 +15,7 @@ namespace ste::shared_futex_detail {
 
 // Latch data storage.
 // Multi-slot specialization
-template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::size_t alignment, std::uint32_t slots = 1>
+template <bool has_waiters_counter, typename waiters_type, typename latch_type, std::uint32_t slots = 1>
 struct latch_storage {
 	static_assert(slots > 1);
 
@@ -41,8 +41,8 @@ struct latch_storage {
 	const auto& operator[](std::size_t idx) const noexcept { return latch_slots[idx]; }
 };
 // Generic single-slot partial specialization
-template <typename waiters_type, typename latch_type, std::size_t alignment>
-struct latch_storage<true, waiters_type, latch_type, alignment, 1> {
+template <typename waiters_type, typename latch_type>
+struct latch_storage<true, waiters_type, latch_type, 1> {
 	// Parking/waiters counters
 	waiters_type waiters{};
 	// Latch
@@ -58,8 +58,8 @@ struct latch_storage<true, waiters_type, latch_type, alignment, 1> {
 	}
 };
 // Single-slot without waiters/parked counters partial specialization
-template <typename waiters_type, typename latch_type, std::size_t alignment>
-struct latch_storage<false, waiters_type, latch_type, alignment, 1> {
+template <typename waiters_type, typename latch_type>
+struct latch_storage<false, waiters_type, latch_type, 1> {
 	// Latch
 	latch_type latch{};
 	

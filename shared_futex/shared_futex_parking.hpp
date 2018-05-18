@@ -21,10 +21,10 @@ class shared_futex_parking<shared_futex_parking_policy::none> {
 public:
 	template <modus_operandi>
 	static constexpr bool provides_accurate_unpark_count() noexcept { return false; }
-	template <modus_operandi>
-	static void park_until() noexcept {}
-	template <modus_operandi>
-	static void unpark() noexcept {}
+	template <modus_operandi, typename... Args>
+	static void park_until(Args&&...) noexcept {}
+	template <modus_operandi, typename... Args>
+	static void unpark(Args&&...) noexcept {}
 };
 
 

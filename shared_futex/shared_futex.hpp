@@ -31,7 +31,7 @@ using shared_futex_micro = shared_futex_detail::shared_futex_t<
  *			lock elision if supported by the system.
  */
 using shared_futex_micro_hle = shared_futex_detail::shared_futex_t<
-	shared_futex_policies::shared_futex_micro_policy,
+	shared_futex_policies::shared_futex_micro_tsx_hle_policy,
 	shared_futex_detail::shared_futex_default_latch
 >;
 

@@ -323,12 +323,8 @@ protected:
 		const auto shared_holders = latch_value.template consumers<modus_operandi::shared_lock>();
 
 		if constexpr (mo_to_check == modus_operandi::shared_lock) {
-			// Shared waiters are permitted iff there are no exclusive holders,
-			// while new shared lockers need to also wait for upgradeable and upgrading holders.
-			if constexpr (primality == acquisition_primality::waiter)
-				return exclusive_holders == 0;
-			else /*(primality == acquisition_primality::acquirer)*/
-				return exclusive_holders == 0 && upgradeable_holders == 0;
+			// Shared waiters are permitted iff there are no exclusive holders
+			return exclusive_holders == 0;
 		}
 		else if constexpr (mo_to_check == modus_operandi::upgradeable_lock) {
 			// Upgradeable lockers are permitted iff there are no exclusive holders nor upgradeable holders
@@ -502,7 +498,7 @@ protected:
 	template <release_reason reason>
 	void release(Latch &l) noexcept {
 		// Release
-		l.template release<mo>(std::move(lock), memory_order::acq_rel);
+		l.template release<mo>(std::move(lock));
 
 		// Unpark waiters
 		const auto latch_value = l.load(memory_order::relaxed);

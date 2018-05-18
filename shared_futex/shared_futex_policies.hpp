@@ -108,7 +108,7 @@ struct shared_futex_tsx_rtm_policy {
 	static constexpr std::size_t upgradeable_bits = 10;
 	static constexpr std::size_t exclusive_bits = 10;
 
-	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::shared_local;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
 	static constexpr bool count_waiters = true;
 	using features = std::tuple<shared_futex_features::use_transactional_rtm>;
 };
