@@ -72,11 +72,11 @@ static constexpr bool collect_statistics = false;
 #endif
 
 
-enum class modus_operandi : std::uint8_t {
-	shared_lock,
-	upgradeable_lock,
-	exclusive_lock,
-	upgrade_to_exclusive_lock,
+enum class operation : std::uint8_t {
+	lock_shared,
+	lock_upgradeable,
+	lock_exclusive,
+	upgrade,
 };
 
 enum class backoff_operation : std::uint8_t {

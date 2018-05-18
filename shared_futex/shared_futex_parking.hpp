@@ -19,11 +19,11 @@ class shared_futex_parking {};
 template <>
 class shared_futex_parking<shared_futex_parking_policy::none> {
 public:
-	template <modus_operandi>
+	template <operation>
 	static constexpr bool provides_accurate_unpark_count() noexcept { return false; }
-	template <modus_operandi, typename... Args>
+	template <operation, typename... Args>
 	static void park_until(Args&&...) noexcept {}
-	template <modus_operandi, typename... Args>
+	template <operation, typename... Args>
 	static void unpark(Args&&...) noexcept {}
 };
 
@@ -39,14 +39,14 @@ public:
 	 *	@brief	If provides_accurate_unpark_count() returns true then return values from unpark() will always reflect accurate count
 	 *			of unparked threads. Otherwise data is estimated or plainly unavailable and shouldn't be relied on.
 	 */
-	template <modus_operandi mo>
+	template <operation op>
 	static constexpr bool provides_accurate_unpark_count() noexcept { return true; }
 
 	/*
 	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
 	*/
-	template <modus_operandi mo, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration>
+	template <operation op, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
 									  ParkSlot &&park_slot,
@@ -58,10 +58,10 @@ public:
 	}
 	
 	/*
-	 *	@brief	Unparks threads of a specified mo.
+	 *	@brief	Unparks threads of a specified op.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <unpark_tactic tactic, modus_operandi mo, typename ParkSlot>
+	template <unpark_tactic tactic, operation op, typename ParkSlot>
 	std::size_t unpark(const ParkSlot &park_slot) noexcept {
 		// Choose function for given unpark tactic
 		const auto unparking_function = tactic == unpark_tactic::all ?
@@ -118,9 +118,9 @@ public:
 	 *	@brief	If provides_accurate_unpark_count() returns true then return values from unpark() will always reflect accurate count
 	 *			of unparked threads. Otherwise the data is estimated or plainly unavailable.
 	 */
-	template <modus_operandi mo>
+	template <operation op>
 	static constexpr bool provides_accurate_unpark_count() noexcept {
-		if constexpr (mo == modus_operandi::shared_lock)
+		if constexpr (op == operation::lock_shared)
 			return false;
 		else
 			return true;
@@ -130,8 +130,8 @@ public:
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
 	template <
-		modus_operandi mo, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration,
-		typename = std::enable_if_t<mo != modus_operandi::shared_lock>
+		operation op, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration,
+		typename = std::enable_if_t<op != operation::lock_shared>
 	>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
@@ -147,8 +147,8 @@ public:
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
 	template <
-		modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration,
-		typename = std::enable_if_t<mo == modus_operandi::shared_lock>
+		operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration,
+		typename = std::enable_if_t<op == operation::lock_shared>
 	>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
@@ -161,12 +161,12 @@ public:
 	}
 	
 	/*
-	 *	@brief	Unparks threads of a specified mo.
+	 *	@brief	Unparks threads of a specified op.
 	 *	@return	Count of threads successfully unparked
 	 */
 	template <
-		unpark_tactic tactic, modus_operandi mo,
-		typename = std::enable_if_t<mo == modus_operandi::shared_lock>
+		unpark_tactic tactic, operation op,
+		typename = std::enable_if_t<op == operation::lock_shared>
 	>
 	std::size_t unpark() noexcept {
 		using shared_cond_var_t = std::decay_t<decltype(shared_cond_var)>;
@@ -188,12 +188,12 @@ public:
 	}
 	
 	/*
-	 *	@brief	Unparks threads of a specified mo.
+	 *	@brief	Unparks threads of a specified op.
 	 *	@return	Count of threads successfully unparked
 	 */
 	template <
-		unpark_tactic tactic, modus_operandi mo, typename ParkSlot,
-		typename = std::enable_if_t<mo != modus_operandi::shared_lock>
+		unpark_tactic tactic, operation op, typename ParkSlot,
+		typename = std::enable_if_t<op != operation::lock_shared>
 	>
 	std::size_t unpark(const ParkSlot &park_slot) noexcept {
 		// Choose function for given unpark tactic

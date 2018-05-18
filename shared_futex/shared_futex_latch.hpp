@@ -72,8 +72,6 @@ public:
 	static constexpr bool use_slots = requires_feature<shared_futex_features::use_slots>();
 
 private:
-	using modus_operandi = modus_operandi;
-	using unpark_tactic = unpark_tactic;
 	enum class latch_acquisition_method : std::uint8_t {
 		set_flag, 
 		cxhg, 
@@ -179,51 +177,51 @@ private:
 
 private:
 	// Specifies the initial state the latch is assumed to be at.
-	template <modus_operandi mo>
+	template <operation op>
 	static constexpr latch_descriptor singular_latch_state_for_mo() noexcept {
-		if constexpr (mo == modus_operandi::upgrade_to_exclusive_lock) {
+		if constexpr (op == operation::upgrade) {
 			// The locker already holds an upgradeable lock
-			return latch_descriptor::template make_locked<modus_operandi::upgradeable_lock>();
+			return latch_descriptor::template make_locked<operation::lock_upgradeable>();
 		}
 
 		// Clean latch otherwise
 		return {};
 	}
-	// Chooses an acquisition method for a given mo
-	template <modus_operandi mo>
+	// Chooses an acquisition method for a given op
+	template <operation op>
 	static constexpr latch_acquisition_method acquisition_method_for_mo() noexcept {
-		switch (mo) {
-		case modus_operandi::shared_lock:
+		switch (op) {
+		case operation::lock_shared:
 			// Shared holders use a counter
 			return latch_acquisition_method::counter;
-		case modus_operandi::exclusive_lock:
+		case operation::lock_exclusive:
 			// Fastest acquisition method, set the bit.
 			return latch_acquisition_method::set_flag;
 		default:
-		case modus_operandi::upgradeable_lock:
-		case modus_operandi::upgrade_to_exclusive_lock:
+		case operation::lock_upgradeable:
+		case operation::upgrade:
 			// compare-exchange to acquire a slot
 			return latch_acquisition_method::cxhg;
 		}
 	}
-	// Returns true if latch should count active waiters for a given mo
-	template <modus_operandi mo>
+	// Returns true if latch should count active waiters for a given op
+	template <operation op>
 	static constexpr bool should_count_waiters() noexcept {
 		if constexpr (count_waiters)
-			return mo == modus_operandi::exclusive_lock || mo == modus_operandi::upgradeable_lock;
+			return op == operation::lock_exclusive || op == operation::lock_upgradeable;
 		else
 			return false;
 	}
-	// Returns true if latch should count parked waiters for a given mo
-	template <modus_operandi mo>
+	// Returns true if latch should count parked waiters for a given op
+	template <operation op>
 	static constexpr bool should_count_parked() noexcept {
 		return parking_allowed;
 	}
 
 	// Generates a unique parking key for parking_lot parkings
-	template <modus_operandi mo>
+	template <operation op>
 	static parking_key_t parking_lot_parking_key() noexcept {
-		return static_cast<uint64_t>(mo);
+		return static_cast<uint64_t>(op);
 	}
 
 	// Acquires lock in transactional mode
@@ -277,15 +275,15 @@ private:
 	// Attempts latch slot acquisition
 	// Returns result and lock contention hint
 	template <
-		acquisition_primality primality, modus_operandi mo, 
+		acquisition_primality primality, operation op, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
 	[[nodiscard]] std::pair<lock_status, lock_contention> acquire_internal_slot(slot_type slot, Validator &&validator, memory_order order) noexcept {
-		static constexpr auto method = acquisition_method_for_mo<mo>();
+		static constexpr auto method = acquisition_method_for_mo<op>();
 		if constexpr (method == latch_acquisition_method::counter ||
 					  method == latch_acquisition_method::cxhg) {
-			auto expected = static_cast<latch_data_type>(singular_latch_state_for_mo<mo>());
-			auto desired_latch = latch_descriptor::template make_locked<mo>();
+			auto expected = static_cast<latch_data_type>(singular_latch_state_for_mo<op>());
+			auto desired_latch = latch_descriptor::template make_locked<op>();
 						  
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
@@ -296,7 +294,7 @@ private:
 			
 			// If we are upgrading the latch and the allow-upgrading-upgraded flag is set then upgrading a latch that has already been upgraded is
 			// allowed.
-			if constexpr (mo == modus_operandi::upgrade_to_exclusive_lock &&
+			if constexpr (op == operation::upgrade &&
 				(flags & internal_acquisition_flags::allow_upgrading_upgraded_latch) != internal_acquisition_flags::none) {
 				if (expected == static_cast<latch_data_type>(desired_latch))
 					return { lock_status::acquired, lock_contention::none };
@@ -306,7 +304,7 @@ private:
 			while (validator(latch_descriptor{ expected })) {
 				desired_latch = latch_descriptor{ expected };
 				desired_latch.set_lock_held_flag();
-				desired_latch.template inc_consumers<mo>(1);
+				desired_latch.template inc_consumers<op>(1);
 				
 				if constexpr (collect_statistics)
 					++debug_statistics.lock_rmw_instructions;
@@ -344,14 +342,14 @@ private:
 		assert(active_slots <= latch_storage_t::count);
 
 		// Attempt acquire
-		const auto [result, contention] = acquire_internal_slot<primality, modus_operandi::shared_lock>(slot, 
+		const auto [result, contention] = acquire_internal_slot<primality, operation::lock_shared>(slot, 
 																										std::forward<Validator>(validator), 
 																										order);
 		if (result != lock_status::not_acquired) {
 			// Success. Re-check active slot count and make sure we are not out of range
 			if (data.latch.active_slots.load() <= slot) {
 				// Revert and fail
-				release_internal_slot<modus_operandi::shared_lock>(slot, result, order);
+				release_internal_slot<operation::lock_shared>(slot, result, order);
 				return {};
 			}
 			
@@ -371,15 +369,15 @@ private:
 		return {};
 	}
 	// Attempts lock acquisition, multi-slot non-shared logic.
-	template <acquisition_primality primality, modus_operandi mo, typename Validator>
+	template <acquisition_primality primality, operation op, typename Validator>
 	[[nodiscard]] latch_lock acquire_internal_multislot_nonshared(Validator &&validator, memory_order order) noexcept {
 		const auto acquire_order = memory_order_load(order);
 
 		// Attempt to acquire primary slot first
-		static constexpr auto flags = mo == modus_operandi::upgrade_to_exclusive_lock ? 
+		static constexpr auto flags = op == operation::upgrade ? 
 			internal_acquisition_flags::allow_upgrading_upgraded_latch :
 			internal_acquisition_flags::none;
-		const auto primary_status = acquire_internal_slot<primality, mo, flags>(primary_slot,
+		const auto primary_status = acquire_internal_slot<primality, op, flags>(primary_slot,
 																				validator,
 																				order).first;
 		if (primary_status == lock_status::not_acquired)
@@ -389,7 +387,7 @@ private:
 			return { primary_status };
 
 		// Upgradeable locks are not mutually exclusive with shared locks, done.
-		if constexpr (mo == modus_operandi::upgradeable_lock)
+		if constexpr (op == operation::lock_upgradeable)
 			return { primary_status };
 
 		// We have acquired primary slot, so there're possibly only shared lockers to contend with on non-primary slots.
@@ -414,14 +412,14 @@ private:
 			return { primary_status };
 
 		// Failure. Revert primary slot.
-		if constexpr (mo != modus_operandi::upgrade_to_exclusive_lock) {
-			release_internal_slot<mo>(primary_slot, primary_status, order);
+		if constexpr (op != operation::upgrade) {
+			release_internal_slot<op>(primary_slot, primary_status, order);
 		}
 		return {};
 	}
 	// Attempts lock acquisition
 	template <
-		acquisition_primality primality, modus_operandi mo, 
+		acquisition_primality primality, operation op, 
 		internal_acquisition_flags flags = internal_acquisition_flags::none, typename Validator
 	>
 	[[nodiscard]] latch_lock acquire_internal(const latch_lock &upgrading_lock, Validator &&validator, memory_order order) noexcept {
@@ -436,14 +434,14 @@ private:
 		
 		// Multi-slot acquisition
 		if constexpr (use_slots) {
-			if constexpr (mo == modus_operandi::shared_lock)
+			if constexpr (op == operation::lock_shared)
 				return acquire_internal_multislot_shared<primality>(std::forward<Validator>(validator), order);
 			else
-				return acquire_internal_multislot_nonshared<primality, mo>(std::forward<Validator>(validator), order);
+				return acquire_internal_multislot_nonshared<primality, op>(std::forward<Validator>(validator), order);
 		}
 
 		// Single-slot acquisition
-		const auto status = acquire_internal_slot<primality, mo, flags>(primary_slot, std::forward<Validator>(validator), order).first;
+		const auto status = acquire_internal_slot<primality, op, flags>(primary_slot, std::forward<Validator>(validator), order).first;
 		return latch_lock{ status };
 	}
 
@@ -463,14 +461,14 @@ private:
 		return false;
 	}
 	// Release a slot
-	template <modus_operandi mo>
+	template <operation op>
 	void release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
-		static constexpr auto method = acquisition_method_for_mo<mo>();
+		static constexpr auto method = acquisition_method_for_mo<op>();
 		const auto store_order = memory_order_store(order);
 
 		// Calculate some latch bits
 		latch_descriptor desired_latch = {};
-		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor::template make_single_consumer<mo>());
+		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor::template make_single_consumer<op>());
 		
 		if constexpr (method == latch_acquisition_method::cxhg ||
 					  method == latch_acquisition_method::counter) {
@@ -481,7 +479,7 @@ private:
 			if constexpr (method == latch_acquisition_method::counter) {
 				static constexpr auto shared_holders_for_atomic_add = 2;
 
-				 if (latch_descriptor{ expected }.template consumers<mo>() >= shared_holders_for_atomic_add) {
+				 if (latch_descriptor{ expected }.template consumers<op>() >= shared_holders_for_atomic_add) {
 				 	if constexpr (collect_statistics)
 				 		++debug_statistics.lock_rmw_instructions;
     
@@ -517,7 +515,7 @@ private:
 		}
 	}
 	// Releases the latch
-	template <modus_operandi mo>
+	template <operation op>
 	void release_internal(slot_type used_slot, lock_status mode, memory_order order) noexcept {
 		// If we can release the latch in transactional mode, we are done.
 		if constexpr (tsx_rtm) {
@@ -530,7 +528,7 @@ private:
 			// Multi-slot mode
 			slot = used_slot;
 		}
-		return release_internal_slot<mo>(slot, mode, order);
+		return release_internal_slot<op>(slot, mode, order);
 	}
 
 public:
@@ -575,11 +573,11 @@ public:
 	 *			that should be consumed when unlocking by a call to release().
 	 */
 	template <
-		acquisition_primality primality, modus_operandi mo, typename Validator,
-		typename = std::enable_if_t<mo != modus_operandi::upgrade_to_exclusive_lock>
+		acquisition_primality primality, operation op, typename Validator,
+		typename = std::enable_if_t<op != operation::upgrade>
 	>
 	[[nodiscard]] latch_lock acquire(Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
-		return acquire_internal<primality, mo>({}, std::forward<Validator>(validator), order);
+		return acquire_internal<primality, op>({}, std::forward<Validator>(validator), order);
 	}
 	
 	/*
@@ -594,7 +592,7 @@ public:
 	 */
 	template <acquisition_primality primality, typename Validator>
 	[[nodiscard]] latch_lock upgrade(latch_lock &&lock, Validator &&validator, memory_order order = memory_order::acq_rel) noexcept {
-		static constexpr modus_operandi mo = modus_operandi::upgrade_to_exclusive_lock;
+		static constexpr operation op = operation::upgrade;
 
 		if constexpr (tsx_rtm) {
 			// If we are in a pending transaction we treat the upgrade as part of the transaction, so that and in case of an abort we will be 
@@ -606,7 +604,7 @@ public:
 		}
 
 		// Otherwise upgrade normally but disallow transactions.
-		auto upgraded_lock = acquire_internal<primality, mo, internal_acquisition_flags::skip_transactional>(lock,
+		auto upgraded_lock = acquire_internal<primality, op, internal_acquisition_flags::skip_transactional>(lock,
 																											 std::forward<Validator>(validator), 
 																											 order);
 		if (upgraded_lock)
@@ -620,39 +618,39 @@ public:
 	 *	
 	 *	@param	lock	lock, acquired via a call to acquire() or upgrade(), to consume.
 	 */
-	template <modus_operandi mo>
+	template <operation op>
 	void release(latch_lock &&lock, memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(lock);
 		
 		// Release and consume the lock
-		release_internal<mo>(lock.slot_used, lock.mode, order);
+		release_internal<op>(lock.slot_used, lock.mode, order);
 		std::move(lock).reset();
 	}
 
 	/*
-	 *	@brief	Attempts unparking of threads of a specified mo using a given unpark tactic.
+	 *	@brief	Attempts unparking of threads of a specified op using a given unpark tactic.
 	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <modus_operandi mo, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	template <operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
 	parking_lot_wait_state park(ParkPredicate &&park_predicate,
 								OnPark &&on_park,
 								const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 
-		if constexpr (mo == modus_operandi::shared_lock &&
+		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
 			// Park shared in local slot
-			return data.parking_lot.park_until<mo>(std::forward<ParkPredicate>(park_predicate),
+			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
 												   std::forward<OnPark>(on_park),
 												   until);
 		}
 		else if constexpr (parking_allowed) {
 			// Wait
-			auto key = parking_lot_parking_key<mo>();
-			return data.parking_lot.park_until<mo>(std::forward<ParkPredicate>(park_predicate),
+			auto key = parking_lot_parking_key<op>();
+			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
 												   std::forward<OnPark>(on_park),
 												   std::move(key),
 												   until);
@@ -662,74 +660,74 @@ public:
 	}
 	
 	/*
-	 *	@brief	Attempts unparking of threads of a specified mo using a given unpark tactic.
+	 *	@brief	Attempts unparking of threads of a specified op using a given unpark tactic.
 	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <unpark_tactic tactic, modus_operandi mo>
+	template <unpark_tactic tactic, operation op>
 	std::size_t unpark() noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 
-		if constexpr (mo == modus_operandi::shared_lock &&
+		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
-			return data.parking_lot.unpark<tactic, mo>();
+			return data.parking_lot.unpark<tactic, op>();
 		}
 		else if constexpr (parking_allowed) {
 			// Generate parking key and attempt unpark
-			auto unpark_key = parking_lot_parking_key<mo>();
-			return data.parking_lot.unpark<tactic, mo>(std::move(unpark_key));
+			auto unpark_key = parking_lot_parking_key<op>();
+			return data.parking_lot.unpark<tactic, op>(std::move(unpark_key));
 		}
 
 		return {};
 	}
 	
 	// Registers as active waiter
-	template <modus_operandi mo>
+	template <operation op>
 	void register_wait(memory_order order = memory_order::release) noexcept {
-		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
+		if constexpr (has_waiters_counter && should_count_waiters<op>()) {
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
-			d.template inc_waiters<mo>(1);
+			d.template inc_waiters<op>(1);
 			const auto bits = static_cast<waiters_counter_type>(d);
 			data.latch.waiters.fetch_add(bits, order);
 		}
 	}
 	// Unregisters as active waiter
-	template <modus_operandi mo>
+	template <operation op>
 	void register_unwait(memory_order order = memory_order::release) noexcept {
-		if constexpr (has_waiters_counter && should_count_waiters<mo>()) {
+		if constexpr (has_waiters_counter && should_count_waiters<op>()) {
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
-			d.template inc_waiters<mo>(1);
+			d.template inc_waiters<op>(1);
 			const auto bits = -static_cast<waiters_counter_type>(d);
 			data.latch.waiters.fetch_add(bits, order);
 		}
 	}
 	// Registers parked thread
-	template <modus_operandi mo>
+	template <operation op>
 	void register_unwait_and_park(memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 		
-		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
+		if constexpr (should_count_waiters<op>() || should_count_parked<op>()) {
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
 			waiters_counter_type bits = 0;
-			if constexpr (should_count_parked<mo>()) {
+			if constexpr (should_count_parked<op>()) {
 				waiters_descriptor dp = {};
-				dp.template inc_parked<mo>(1);
+				dp.template inc_parked<op>(1);
 				bits += static_cast<waiters_counter_type>(dp);
 			}
-			if constexpr (should_count_waiters<mo>()) {
+			if constexpr (should_count_waiters<op>()) {
 				// Remove wait bit
 				waiters_descriptor dw = {};
-				dw.template inc_waiters<mo>(1);
+				dw.template inc_waiters<op>(1);
 				bits -= static_cast<waiters_counter_type>(dw);
 			}
 
@@ -737,25 +735,25 @@ public:
 		}
 	}
 	// Unregister parked and register as waiter
-	template <modus_operandi mo>
+	template <operation op>
 	void register_unpark_and_wait(memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 		
-		if constexpr (should_count_waiters<mo>() || should_count_parked<mo>()) {
+		if constexpr (should_count_waiters<op>() || should_count_parked<op>()) {
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
 			waiters_counter_type bits = 0;
-			if constexpr (should_count_parked<mo>()) {
+			if constexpr (should_count_parked<op>()) {
 				waiters_descriptor dp = {};
-				dp.template inc_parked<mo>(1);
+				dp.template inc_parked<op>(1);
 				bits -= static_cast<waiters_counter_type>(dp);
 			}
-			if constexpr (should_count_waiters<mo>()) {
+			if constexpr (should_count_waiters<op>()) {
 				// Add wait bit
 				waiters_descriptor dw = {};
-				dw.template inc_waiters<mo>(1);
+				dw.template inc_waiters<op>(1);
 				bits += static_cast<waiters_counter_type>(dw);
 			}
 
@@ -763,19 +761,19 @@ public:
 		}
 	}
 	// Unregister parked thread(s)
-	template <modus_operandi mo>
+	template <operation op>
 	void register_unpark(std::size_t count = 1, memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex) {
 			assert(parking_allowed && "Parking not allowed");
 			assert(count && "Count must be positive");
 		}
 		
-		if constexpr (should_count_parked<mo>()) {
+		if constexpr (should_count_parked<op>()) {
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
 			waiters_descriptor d = {};
-			d.template inc_parked<mo>(count);
+			d.template inc_parked<op>(count);
 			const auto bits = -static_cast<waiters_counter_type>(d);
 			
 			data.latch.waiters.fetch_add(bits);

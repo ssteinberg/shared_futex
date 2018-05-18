@@ -102,16 +102,16 @@ public:
 	bool operator!=(const latch_descriptor &rhs) const noexcept { return !(*this == rhs); }
 
 	// Counts number of active consumers
-	template <modus_operandi mo>
+	template <operation op>
 	auto consumers() const noexcept {
 		static constexpr auto exclusively_held = static_cast<T>(1) << lock_held_bit_index;
-		switch (mo) {
-		case modus_operandi::shared_lock:
+		switch (op) {
+		case operation::lock_shared:
 			return storage.shared_consumers;
-		case modus_operandi::upgradeable_lock:
+		case operation::lock_upgradeable:
 			return storage.upgradeable_consumers;
-		case modus_operandi::exclusive_lock:
-		case modus_operandi::upgrade_to_exclusive_lock:
+		case operation::lock_exclusive:
+		case operation::upgrade:
 			// Exclusively owned iff lock is held and no shared consumers are in flight.
 			return static_cast<T>(*this) == exclusively_held ? 
 				static_cast<counter_t>(1) : 
@@ -130,13 +130,13 @@ public:
 		return t;
 	}
 
-	template <modus_operandi mo>
+	template <operation op>
 	void inc_consumers(const counter_t &count) noexcept {
-		switch (mo) {
-		case modus_operandi::shared_lock:
+		switch (op) {
+		case operation::lock_shared:
 			storage.shared_consumers += count;
 			break;
-		case modus_operandi::upgradeable_lock:
+		case operation::lock_upgradeable:
 			storage.upgradeable_consumers += count;
 		default:
 			if constexpr (shared_futex_detail::debug_shared_futex)
@@ -147,18 +147,18 @@ public:
 	void set_lock_held_flag() noexcept { storage.lock_held_flag_bit = true; }
 
 	// Returns a dummy latch value with a single consumer
-	template <modus_operandi mo>
+	template <operation op>
 	static latch_descriptor make_single_consumer() noexcept {
 		latch_descriptor d = {};
-		d.template inc_consumers<mo>(1);
+		d.template inc_consumers<op>(1);
 		return d;
 	}
 	// Returns a dummy latch value with lock held by a single consumer
-	template <modus_operandi mo>
+	template <operation op>
 	static latch_descriptor make_locked() noexcept {
 		latch_descriptor d = {};
 		d.set_lock_held_flag();
-		d.template inc_consumers<mo>(1);
+		d.template inc_consumers<op>(1);
 		return d;
 	}
 	static latch_descriptor make_exclusive_locked() noexcept {
@@ -226,20 +226,20 @@ public:
 	bool operator!=(const waiters_descriptor &rhs) const noexcept { return !(*this == rhs); }
 
 	// Counts number of parked consumers
-	template <modus_operandi mo>
+	template <operation op>
 	auto parked() const noexcept {
-		switch (mo) {
-		case modus_operandi::shared_lock:
+		switch (op) {
+		case operation::lock_shared:
 			return storage.shared_parked;
-		case modus_operandi::upgradeable_lock:
+		case operation::lock_upgradeable:
 			if constexpr (count_non_shared_parked)
 				return storage.upgradeable_parked;
 			break;
-		case modus_operandi::exclusive_lock:
+		case operation::lock_exclusive:
 			if constexpr (count_non_shared_parked)
 				return storage.exclusive_parked;
 			break;
-		case modus_operandi::upgrade_to_exclusive_lock:
+		case operation::upgrade:
 			if constexpr (count_non_shared_parked)
 				return storage.upgrading_to_exclusive_parked;
 			break;
@@ -248,15 +248,15 @@ public:
 		return static_cast<counter_t>(0);
 	}
 	// Counts number of waiting consumers
-	template <modus_operandi mo>
+	template <operation op>
 	auto waiters() const noexcept {
-		static_assert(mo == modus_operandi::upgradeable_lock || mo == modus_operandi::exclusive_lock);
+		static_assert(op == operation::lock_upgradeable || op == operation::lock_exclusive);
 
 		if constexpr (count_waiters) {
-			switch (mo) {
-			case modus_operandi::upgradeable_lock:
+			switch (op) {
+			case operation::lock_upgradeable:
 				return storage.upgradeable_waiters;
-			case modus_operandi::exclusive_lock:
+			case operation::lock_exclusive:
 				return storage.exclusive_waiters;
 			}
 		}
@@ -273,36 +273,36 @@ public:
 		return c;
 	}
 
-	template <modus_operandi mo>
+	template <operation op>
 	void inc_parked(const counter_t &count) noexcept {
-		switch (mo) {
-		case modus_operandi::shared_lock:
+		switch (op) {
+		case operation::lock_shared:
 			storage.shared_parked += count;
 			break;
-		case modus_operandi::upgradeable_lock:
+		case operation::lock_upgradeable:
 			if constexpr (count_non_shared_parked)
 				storage.upgradeable_parked += count;
 			break;
-		case modus_operandi::exclusive_lock:
+		case operation::lock_exclusive:
 			if constexpr (count_non_shared_parked)
 				storage.exclusive_parked += count;
 			break;
-		case modus_operandi::upgrade_to_exclusive_lock:
+		case operation::upgrade:
 			if constexpr (count_non_shared_parked)
 				storage.upgrading_to_exclusive_parked += count;
 			break;
 		default:{}
 		}
 	}
-	template <modus_operandi mo>
+	template <operation op>
 	void inc_waiters(const counter_t &count) noexcept {
-		static_assert(mo == modus_operandi::upgradeable_lock || mo == modus_operandi::exclusive_lock);
+		static_assert(op == operation::lock_upgradeable || op == operation::lock_exclusive);
 		static_assert(count_waiters);
-		switch (mo) {
-		case modus_operandi::upgradeable_lock:
+		switch (op) {
+		case operation::lock_upgradeable:
 			storage.upgradeable_waiters += count;
 			break;
-		case modus_operandi::exclusive_lock:
+		case operation::lock_exclusive:
 			storage.exclusive_waiters += count;
 			break;
 		}
