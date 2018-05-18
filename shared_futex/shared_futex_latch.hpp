@@ -508,7 +508,7 @@ private:
 			if constexpr (tsx_hle_exclusive) {
 				// xrelease
 				if (mode == lock_status::transaction) {
-					data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), memory_order::xrelease);
+					data.latch[slot]->bit_test_and_reset(static_cast<latch_data_type>(desired_latch), memory_order::xrelease);
 					return;
 				}
 			}
