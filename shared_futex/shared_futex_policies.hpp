@@ -108,7 +108,7 @@ struct shared_futex_tsx_rtm_policy {
 	static constexpr std::size_t upgradeable_bits = 10;
 	static constexpr std::size_t exclusive_bits = 10;
 
-	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::shared_local;
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
 	static constexpr bool count_waiters = true;
 	using features = std::tuple<shared_futex_features::use_transactional_rtm>;
 };
@@ -140,7 +140,7 @@ struct spinlock_backoff_policy {
 
 	static constexpr std::size_t max_spin_count = 10;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
 	static constexpr backoff_operation select_operation(std::size_t iteration, backoff_aggressiveness, float,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if ((iteration % 100) == 0 &&
@@ -148,7 +148,7 @@ struct spinlock_backoff_policy {
 			return backoff_operation::timeout;
 		return backoff_operation::spin;
 	}
-	template <shared_futex_detail::modus_operandi>
+	template <shared_futex_detail::operation>
 	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept {
 		const auto rdtsc = __rdtsc();
 		return (rdtsc % 48) + 32;
@@ -166,7 +166,7 @@ struct exponential_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
 	static constexpr backoff_operation select_operation(std::size_t iteration, float,
 														backoff_aggressiveness aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
@@ -189,7 +189,7 @@ struct exponential_backoff_policy {
 		// Park
 		return backoff_operation::park;
 	}
-	template <shared_futex_detail::modus_operandi>
+	template <shared_futex_detail::operation>
 	static std::size_t spin_count(std::size_t iteration, float, backoff_aggressiveness aggressiveness) noexcept {
 		// Calculate spin count
 		const auto x = static_cast<float>(iteration - 1);
@@ -239,7 +239,7 @@ struct relaxed_backoff_policy {
 
 	static constexpr int yield_iterations = 5;
 
-	template <shared_futex_detail::modus_operandi, typename Clock, typename Duration>
+	template <shared_futex_detail::operation, typename Clock, typename Duration>
 	static constexpr backoff_operation select_operation(std::size_t iteration, float, backoff_aggressiveness aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if (until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
@@ -251,7 +251,7 @@ struct relaxed_backoff_policy {
 		// Otherwise park
 		return backoff_operation::park;
 	}
-	template <shared_futex_detail::modus_operandi>
+	template <shared_futex_detail::operation>
 	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept { return 0; }
 };
 
