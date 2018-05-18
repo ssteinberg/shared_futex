@@ -8,6 +8,7 @@
 #include "shared_futex_latch_storage.hpp"
 #include "../atomic/atomic_tsx.hpp"
 #include "../utils/tuple_has_type.hpp"
+#include "../arithmetic/ceil_power_of_two.hpp"
 
 #include <cassert>
 #include <tuple>
@@ -169,7 +170,7 @@ private:
 	>;
 	
 	using latch_data_t = latch_data<latch_storage_t, parking_lot_t, parking_allowed>;
-	static constexpr auto alignment = std::max(futex_policy::alignment, sizeof(latch_data_t));
+	static constexpr auto alignment = ceil_power_of_two(std::max(futex_policy::alignment, sizeof(latch_data_t)));
 
 private:
 	// Latch storage
