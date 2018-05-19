@@ -74,8 +74,16 @@ struct latch_storage<false, waiters_type, latch_type, 1> {
 };
 
 
-template <typename T, typename Data, shared_futex_parking_policy parking_policy>
+template <typename T, typename Data, bool compact, shared_futex_parking_policy parking_policy>
 struct latch_descriptor_storage {
+	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 2;
+
+	T lock_held_flag_bit		: 1;
+	T upgradeable_consumers		: 1;
+	T shared_consumers			: shared_consumers_bits;
+};
+template <typename T, typename Data, shared_futex_parking_policy parking_policy>
+struct latch_descriptor_storage<T, Data, false, parking_policy> {
 	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 4;
 
 	T lock_held_flag_bit		: 1;
@@ -85,8 +93,10 @@ struct latch_descriptor_storage {
 };
 template <typename T, shared_futex_parking_policy parking_policy>
 class latch_descriptor {
+	static constexpr bool compact = sizeof(T) < 4;
+
 	using counter_t = std::make_unsigned_t<T>;
-	using storage_t = latch_descriptor_storage<counter_t, T, parking_policy>;
+	using storage_t = latch_descriptor_storage<counter_t, T, compact, parking_policy>;
 
 	static constexpr auto lock_held_bit_index = 0;
 	static constexpr auto shared_consumers_bits = storage_t::shared_consumers_bits;

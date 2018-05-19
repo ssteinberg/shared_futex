@@ -66,13 +66,13 @@ struct shared_futex_default_policy {
 };
 
 /*
- *	@brief	Policy without parking or waiters counters, used to fit a futex into 32-bits.
+ *	@brief	Policy without parking or waiters counters, used to fit a futex into 8-bits.
  */
-struct shared_futex_micro_policy {
+struct shared_futex_pico_policy {
 	static constexpr std::size_t alignment = 1;
-	using latch_data_type = std::uint32_t;
+	using latch_data_type = std::uint8_t;
 
-	static constexpr std::size_t shared_bits = 15;
+	static constexpr std::size_t shared_bits = 6;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
@@ -82,13 +82,13 @@ struct shared_futex_micro_policy {
 };
 
 /*
- *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 32-bits.
+ *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 8-bits.
  */
-struct shared_futex_micro_tsx_hle_policy {
+struct shared_futex_pico_tsx_hle_policy {
 	static constexpr std::size_t alignment = 1;
-	using latch_data_type = std::uint32_t;
+	using latch_data_type = std::uint8_t;
 
-	static constexpr std::size_t shared_bits = 15;
+	static constexpr std::size_t shared_bits = 6;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 

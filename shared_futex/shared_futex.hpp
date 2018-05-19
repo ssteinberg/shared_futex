@@ -20,8 +20,8 @@ using shared_futex = shared_futex_detail::shared_futex_t<
  *	@brief	Shared, upgradeable futex.
  *			Compact version, consumes 32-bit of storage, at the expense of performance under contention.
  */
-using shared_futex_micro = shared_futex_detail::shared_futex_t<
-	shared_futex_policies::shared_futex_micro_policy,
+using shared_futex_pico = shared_futex_detail::shared_futex_t<
+	shared_futex_policies::shared_futex_pico_policy,
 	shared_futex_detail::shared_futex_default_latch
 >;
 
@@ -30,8 +30,8 @@ using shared_futex_micro = shared_futex_detail::shared_futex_t<
  *			Compact version, consumes 32-bit of storage, at the expense of performance under contention. Employs hardware
  *			lock elision if supported by the system.
  */
-using shared_futex_micro_hle = shared_futex_detail::shared_futex_t<
-	shared_futex_policies::shared_futex_micro_tsx_hle_policy,
+using shared_futex_pico_hle = shared_futex_detail::shared_futex_t<
+	shared_futex_policies::shared_futex_pico_tsx_hle_policy,
 	shared_futex_detail::shared_futex_default_latch
 >;
 
