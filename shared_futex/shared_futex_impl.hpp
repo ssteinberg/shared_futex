@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -17,6 +17,20 @@
 #include <immintrin.h>
 
 namespace ste {
+
+
+// Force inlining key methods generates slightly better output.
+#ifdef __shared_futex_force_inline
+#error Macro already in use
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#define __shared_futex_force_inline attribute((always_inline))
+#elif defined(_MSC_VER)
+#define __shared_futex_force_inline __forceinline
+#else
+#define __shared_futex_force_inline inline
+#endif
+
 
 namespace shared_futex_detail {
 
@@ -498,10 +512,10 @@ protected:
 	template <release_reason reason>
 	void release(Latch &l) noexcept {
 		// Release
-		l.template release<op>(std::move(lock));
+		l.template release<op>(std::move(lock), memory_order::release);
 
 		// Unpark waiters
-		const auto latch_value = l.load(memory_order::relaxed);
+		const auto latch_value = l.load(memory_order::acquire);
 		unpark_if_needed<op>(l, latch_value);
 	}
 
@@ -607,7 +621,7 @@ public:
 	 *	@return	True on success, false on failure.
 	 */
 	template <operation lock_op = op, typename = std::enable_if_t<lock_op != operation::upgrade>>
-	bool try_lock(Latch &l) noexcept {
+	__shared_futex_force_inline bool try_lock(Latch &l) noexcept {
 		// Attempt lock/upgrade
 		return acquire<acquisition_primality::initial>(l);
 	}
@@ -619,7 +633,7 @@ public:
 	 *	@return	True on success, false on failure.
 	 */
 	template <operation lock_op = op, typename = std::enable_if_t<lock_op == operation::upgrade>>
-	bool try_lock(Latch &l, latch_lock_t &&lock_to_consume) noexcept {
+	__shared_futex_force_inline bool try_lock(Latch &l, latch_lock_t &&lock_to_consume) noexcept {
 		// Attempt lock/upgrade
 		return acquire<acquisition_primality::initial>(l, std::move(lock_to_consume));
 	}
@@ -634,7 +648,7 @@ public:
 		typename Clock, typename Duration,
 		operation lock_op = op, typename = std::enable_if_t<lock_op != operation::upgrade>
 	>
-	bool try_lock_until(Latch &l, const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	__shared_futex_force_inline bool try_lock_until(Latch &l, const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Attempt lock/upgrade
 		if (acquire<acquisition_primality::initial>(l))
 			return true;
@@ -653,7 +667,7 @@ public:
 		typename Clock, typename Duration,
 		operation lock_op = op, typename = std::enable_if_t<lock_op == operation::upgrade>
 	>
-	bool try_lock_until(Latch &l, latch_lock_t &&lock_to_consume, const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	__shared_futex_force_inline bool try_lock_until(Latch &l, latch_lock_t &&lock_to_consume, const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Attempt lock/upgrade
 		const auto acquire_result = acquire<acquisition_primality::initial>(l, std::move(lock_to_consume));
 		if (acquire_result)
@@ -665,7 +679,7 @@ public:
 	/*
 	 *	@brief	Releases the lock.
 	 */
-	void unlock(Latch &l) noexcept {
+	__shared_futex_force_inline void unlock(Latch &l) noexcept {
 		assert(owns_lock());
 		release<release_reason::lock_release>(l);
 	}
@@ -808,5 +822,8 @@ auto try_upgrade_lock_for(lock_guard<SharedFutex, shared_futex_detail::shared_fu
 	const auto until = std::chrono::steady_clock::now() + duration;
 	return try_upgrade_lock_until<BackoffPolicy>(std::move(upgradeable_guard), until);
 }
+
+
+#undef __shared_futex_force_inline
 
 }
