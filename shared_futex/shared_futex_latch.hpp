@@ -466,32 +466,24 @@ private:
 	void release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<op>();
 		const auto store_order = memory_order_store(order);
+		const auto load_order = memory_order_load(order);
 
 		// Calculate some latch bits
 		latch_descriptor desired_latch = {};
 		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor::template make_single_consumer<op>());
 		
-		if constexpr (method == latch_acquisition_method::cxhg ||
-					  method == latch_acquisition_method::counter) {
-			// Attempt to free the latch
-			latch_data_type expected = data.latch[slot]->load(memory_order::acquire);
-								 
-			// Optimization for counter method: If we have enough holders, atomically decrement counter.
-			if constexpr (method == latch_acquisition_method::counter) {
-				static constexpr auto shared_holders_for_atomic_add = 2;
+		if constexpr (method == latch_acquisition_method::counter) {
+			// Counter: Atomically decrement counter.
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
 
-				 if (latch_descriptor{ expected }.template consumers<op>() >= shared_holders_for_atomic_add) {
-				 	if constexpr (collect_statistics)
-				 		++debug_statistics.lock_rmw_instructions;
-    
-				 	const auto new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
-				 	if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
-				 		data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
-    
-				 	return;
-				 }
-			}
-
+			const auto new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
+			if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
+				data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
+		}
+		else if constexpr (method == latch_acquisition_method::cxhg) {
+			// Compare-exchange loop
+			auto expected = data.latch[slot]->load(load_order);
 			do {
 				if constexpr (collect_statistics)
 					++debug_statistics.lock_rmw_instructions;

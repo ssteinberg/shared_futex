@@ -204,23 +204,22 @@ struct exponential_backoff_policy {
 
 private:
 	static constexpr float sqrt_spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
-		return aggressiveness == backoff_aggressiveness::aggressive ?
-			16.f :   // ~900 pause instructions, on the scale of ~3 microseconds
-			32.f;    // ~500 pause instructions, on the scale of ~2 microseconds
+		return 10.f;		// +100 pause instructions on last iteration, on the scale of ~400 nanoseconds.
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 128 :
+			aggressiveness == backoff_aggressiveness::aggressive ? 256 :
 			aggressiveness == backoff_aggressiveness::normal ? 96 :
-			aggressiveness == backoff_aggressiveness::relaxed ? 32 :
+			aggressiveness == backoff_aggressiveness::relaxed ? 64 :
 			0;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
-		return aggressiveness == backoff_aggressiveness::relaxed ? 64ull : 32ull;
+		return aggressiveness == backoff_aggressiveness::relaxed ? 96ull : 64ull;
 	}
 	static std::size_t spin_symmetry_breaker(backoff_aggressiveness aggressiveness) noexcept {
+		const auto max = spin_base_count(aggressiveness);
 		const auto rdtsc = __rdtsc();
-		return static_cast<std::size_t>(rdtsc % 64);
+		return static_cast<std::size_t>(rdtsc % max);
 	}
 	static constexpr std::size_t yield_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return 0;

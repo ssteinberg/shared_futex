@@ -78,15 +78,15 @@ struct memory_order_helper {
 }
 
 // MSVC 14.1 refuses to inline fetch_or() while happily inlining everything else. Forcing the inline generates much cleaner output.
-#ifdef __ATOMIC_STX_FORCE_INLINE
+#ifdef __atomic_tsx_force_inline
 #error Macro already in use
 #endif
 #if defined(__GNUC__) || defined(__clang__)
-#define __ATOMIC_STX_FORCE_INLINE attribute((always_inline))
+#define __atomic_tsx_force_inline attribute((always_inline))
 #elif defined(_MSC_VER)
-#define __ATOMIC_STX_FORCE_INLINE __forceinline
+#define __atomic_tsx_force_inline __forceinline
 #else
-#define __ATOMIC_STX_FORCE_INLINE inline
+#define __atomic_tsx_force_inline inline
 #endif
 
 /*
@@ -119,7 +119,7 @@ private:
 		return _atomic_tsx_detail::is_x86_64 && (order == memory_order::xacquire || order == memory_order::xrelease);
 	}
 
-	__ATOMIC_STX_FORCE_INLINE static void tsx_store(void *dst, T desired, memory_order order) noexcept {
+	__atomic_tsx_force_inline static void tsx_store(void *dst, T desired, memory_order order) noexcept {
 		assert(order == memory_order::xrelease && "Incorrect memory order (Only XRELEASE allowed for TSX store operation)");
 		
 		if constexpr (is64wide)
@@ -128,7 +128,7 @@ private:
 			_Store_HLERelease(reinterpret_cast<intrinsic_hle_type volatile*>(dst), *reinterpret_cast<const intrinsic_hle_type*>(&desired));
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_exchange(void* dst, T desired, memory_order order) noexcept {
+	__atomic_tsx_force_inline static T tsx_exchange(void* dst, T desired, memory_order order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedExchange64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -145,7 +145,7 @@ private:
 		}
 	}
 
-	__ATOMIC_STX_FORCE_INLINE static bool tsx_compare_exchange(void *dst, T &expected, T desired,
+	__atomic_tsx_force_inline static bool tsx_compare_exchange(void *dst, T &expected, T desired,
 															   _atomic_tsx_detail::memory_order_helper success) noexcept {
 		if constexpr (is64wide) {
 			const auto prev = success == memory_order::xacquire ?
@@ -175,7 +175,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_fetch_add(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static T tsx_fetch_add(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedExchangeAdd64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -192,7 +192,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_fetch_sub(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static T tsx_fetch_sub(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedExchangeAdd64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -209,7 +209,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_fetch_and(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static T tsx_fetch_and(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedAnd64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -226,7 +226,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_fetch_or(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static T tsx_fetch_or(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedOr64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -243,7 +243,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static T tsx_fetch_xor(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static T tsx_fetch_xor(void *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			return order == memory_order::xacquire ?
 				_InterlockedXor64_HLEAcquire(reinterpret_cast<intrinsic_hle_type volatile*>(dst), 
@@ -260,7 +260,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static bool bts(void *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static bool bts(void *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			if (order == memory_order::xacquire)
 				return _interlockedbittestandset64_HLEAcquire(reinterpret_cast<intrinsic_hle_type*>(dst),
@@ -283,7 +283,7 @@ private:
 		}
 	}
 	
-	__ATOMIC_STX_FORCE_INLINE static bool btr(void *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
+	__atomic_tsx_force_inline static bool btr(void *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
 		if constexpr (is64wide) {
 			if (order == memory_order::xacquire)
 				return _interlockedbittestandreset64_HLEAcquire(reinterpret_cast<intrinsic_hle_type*>(dst),
@@ -321,7 +321,7 @@ public:
 	operator std::atomic<T>&() noexcept { return atomic(); }
 	operator const std::atomic<T>&() const noexcept { return atomic(); }
 
-	__ATOMIC_STX_FORCE_INLINE T operator=(T desired) noexcept {
+	__atomic_tsx_force_inline T operator=(T desired) noexcept {
 		store(desired);
 		return desired;
 	}
@@ -331,7 +331,7 @@ public:
 	/*
 	 *	@brief	Atomically replaces the value of the atomic object with a non-atomic argument.
 	 */
-	__ATOMIC_STX_FORCE_INLINE void store(T desired, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline void store(T desired, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				tsx_store(this, desired, order);
@@ -342,7 +342,7 @@ public:
 	/*
 	 *	@brief	Atomically obtains the value of the atomic object.
 	 */
-	__ATOMIC_STX_FORCE_INLINE T load(_atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) const noexcept {
+	__atomic_tsx_force_inline T load(_atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) const noexcept {
 		if (use_tsx(order))
 			assert("Incorrect memory order (No TSX operations for load)");
 		return var.load(order);
@@ -350,12 +350,12 @@ public:
 	/*
 	 *	@brief	Loads a value from an atomic object, equivalent to load().
 	 */
-	__ATOMIC_STX_FORCE_INLINE operator T() const noexcept { return load(); }
+	__atomic_tsx_force_inline operator T() const noexcept { return load(); }
 	
 	/*
 	 *	@brief	Atomically replaces the value of the atomic object and obtains the value held previously.
 	 */
-	__ATOMIC_STX_FORCE_INLINE T exchange(T desired, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T exchange(T desired, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_exchange(this, desired, order);
@@ -369,7 +369,7 @@ public:
 	 *	@brief	Atomically compares the value of the atomic object with non-atomic argument and performs atomic exchange if equal or atomic 
 	 *			load if not.
 	 */
-	__ATOMIC_STX_FORCE_INLINE bool compare_exchange_weak(T &expected, T desired,
+	__atomic_tsx_force_inline bool compare_exchange_weak(T &expected, T desired,
 														 _atomic_tsx_detail::memory_order_helper success,
 														 _atomic_tsx_detail::memory_order_helper failure) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
@@ -383,7 +383,7 @@ public:
 	 *	@brief	Atomically compares the value of the atomic object with non-atomic argument and performs atomic exchange if equal or atomic 
 	 *			load if not.
 	 */
-	__ATOMIC_STX_FORCE_INLINE bool compare_exchange_weak(T &expected, T desired,
+	__atomic_tsx_force_inline bool compare_exchange_weak(T &expected, T desired,
 														 _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
@@ -397,7 +397,7 @@ public:
 	 *	@brief	Atomically compares the value of the atomic object with non-atomic argument and performs atomic exchange if equal or atomic 
 	 *			load if not.
 	 */
-	__ATOMIC_STX_FORCE_INLINE bool compare_exchange_strong(T &expected, T desired,
+	__atomic_tsx_force_inline bool compare_exchange_strong(T &expected, T desired,
 														   _atomic_tsx_detail::memory_order_helper success,
 														   _atomic_tsx_detail::memory_order_helper failure) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
@@ -411,7 +411,7 @@ public:
 	 *	@brief	Atomically compares the value of the atomic object with non-atomic argument and performs atomic exchange if equal or atomic 
 	 *			load if not.
 	 */
-	__ATOMIC_STX_FORCE_INLINE bool compare_exchange_strong(T &expected, T desired,
+	__atomic_tsx_force_inline bool compare_exchange_strong(T &expected, T desired,
 														   _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
@@ -427,7 +427,7 @@ public:
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T fetch_add(integral_op_type arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T fetch_add(integral_op_type arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_fetch_add(this, arg, order);
@@ -441,21 +441,21 @@ public:
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator+=(integral_op_type arg) noexcept { return fetch_add(arg) + arg; }
+	__atomic_tsx_force_inline T operator+=(integral_op_type arg) noexcept { return fetch_add(arg) + arg; }
 	/*
 	 *	@brief	Atomically increments the current value.
 	 *	
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator++() noexcept { return fetch_add(1) + 1; }
+	__atomic_tsx_force_inline T operator++() noexcept { return fetch_add(1) + 1; }
 	/*
 	 *	@brief	Atomically increments the current value.
 	 *	
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator++(int) noexcept { return fetch_add(1); }
+	__atomic_tsx_force_inline T operator++(int) noexcept { return fetch_add(1); }
 	
 	/*
 	 *	@brief	Atomically subtracts the argument from the value stored in the atomic object and obtains the value held previously.
@@ -463,7 +463,7 @@ public:
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T fetch_sub(integral_op_type arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T fetch_sub(integral_op_type arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_fetch_sub(this, arg, order);
@@ -478,21 +478,21 @@ public:
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator-=(integral_op_type arg) noexcept { return fetch_sub(arg) - arg; }
+	__atomic_tsx_force_inline T operator-=(integral_op_type arg) noexcept { return fetch_sub(arg) - arg; }
 	/*
 	 *	@brief	Atomically decrements the current value.
 	 *	
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator--() noexcept { return fetch_sub(1) - 1; }
+	__atomic_tsx_force_inline T operator--() noexcept { return fetch_sub(1) - 1; }
 	/*
 	 *	@brief	Atomically decrements the current value.
 	 *	
 	 *			Only defined for integral, floating-point or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_floating_point_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator--(int) noexcept { return fetch_sub(1); }
+	__atomic_tsx_force_inline T operator--(int) noexcept { return fetch_sub(1); }
 
 	/*
 	 *	@brief	Atomically performs bitwise AND between the argument and the value of the atomic object and obtains the value held previously.
@@ -500,7 +500,7 @@ public:
 	 *			Only defined for integral types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T fetch_and(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T fetch_and(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_fetch_and(this, arg, order);
@@ -513,7 +513,7 @@ public:
 	 *			after the operation.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator&=(T arg) noexcept { return fetch_and(arg) & arg; }
+	__atomic_tsx_force_inline T operator&=(T arg) noexcept { return fetch_and(arg) & arg; }
 
 	/*
 	 *	@brief	Atomically performs bitwise OR between the argument and the value of the atomic object and obtains the value held previously.
@@ -521,7 +521,7 @@ public:
 	 *			Only defined for integral types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T fetch_or(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T fetch_or(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_fetch_or(this, arg, order);
@@ -534,7 +534,7 @@ public:
 	 *			after the operation.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator|=(T arg) noexcept { return fetch_or(arg) | arg; }
+	__atomic_tsx_force_inline T operator|=(T arg) noexcept { return fetch_or(arg) | arg; }
 
 	/*
 	 *	@brief	Atomically performs bitwise XOR between the argument and the value of the atomic object and obtains the value held previously.
@@ -542,7 +542,7 @@ public:
 	 *			Only defined for integral types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T fetch_xor(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline T fetch_xor(T arg, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64) {
 			if (use_tsx(order))
 				return tsx_fetch_xor(this, arg, order);
@@ -555,7 +555,7 @@ public:
 	 *			after the operation.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE T operator^=(T arg) noexcept { return fetch_xor(arg) ^ arg; }
+	__atomic_tsx_force_inline T operator^=(T arg) noexcept { return fetch_xor(arg) ^ arg; }
 
 	/*
 	 *	@brief	Atomically sets the bit at the specified position and returns the bit value before the set.
@@ -563,7 +563,7 @@ public:
 	 *			Only defined for integral or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE bool bit_test_and_set(int bit, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline bool bit_test_and_set(int bit, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64)
 			return bts(this, bit, order);
 		
@@ -578,7 +578,7 @@ public:
 	 *			Only defined for integral or pointer types.
 	 */
 	template <typename S = T, typename = std::enable_if_t<std::is_integral_v<S> || std::is_pointer_v<S>>>
-	__ATOMIC_STX_FORCE_INLINE bool bit_test_and_reset(int bit, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
+	__atomic_tsx_force_inline bool bit_test_and_reset(int bit, _atomic_tsx_detail::memory_order_helper order = memory_order::seq_cst) noexcept {
 		if constexpr (_atomic_tsx_detail::is_x86_64)
 			return btr(this, bit, order);
 
@@ -617,7 +617,7 @@ constexpr status operator&(const status &lhs, const status &rhs) noexcept {
  *	@brief	Starts a transaction. 
  *	@return	A pair of transaction status and abort code. Abort code is relevant only if status::abort_explicit is set.
  */
-static __ATOMIC_STX_FORCE_INLINE std::pair<status, abort_code> transaction_begin() noexcept {
+static __atomic_tsx_force_inline std::pair<status, abort_code> transaction_begin() noexcept {
 	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
 
 	// Begin transaction
@@ -653,21 +653,21 @@ static __ATOMIC_STX_FORCE_INLINE std::pair<status, abort_code> transaction_begin
  *	@brief	Aborts the transaction with a specified abort code
  */
 template <abort_code code>
-static __ATOMIC_STX_FORCE_INLINE void transaction_abort() noexcept {
+static __atomic_tsx_force_inline void transaction_abort() noexcept {
 	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
 	_xabort(static_cast<unsigned int>(code));
 }
 /*
  *	@brief	Ends the transaction
  */
-static __ATOMIC_STX_FORCE_INLINE void transaction_end() noexcept {
+static __atomic_tsx_force_inline void transaction_end() noexcept {
 	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
 	_xend();
 }
 /*
  *	@brief	Checks if a transaction is currently active
  */
-static __ATOMIC_STX_FORCE_INLINE bool transaction_active() noexcept {
+static __atomic_tsx_force_inline bool transaction_active() noexcept {
 	static_assert(_atomic_tsx_detail::is_x86_64, "Only supported on x86-64");
 	return _xtest() != 0;
 }
@@ -675,6 +675,6 @@ static __ATOMIC_STX_FORCE_INLINE bool transaction_active() noexcept {
 }
 
 
-#undef __ATOMIC_STX_FORCE_INLINE
+#undef __atomic_tsx_force_inline
 
 }
