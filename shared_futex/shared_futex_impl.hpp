@@ -238,7 +238,11 @@ struct shared_futex_backoff_protocol {
 		if (selected_backoff_op == backoff_operation::spin) {
 			// Choose spin count
 			const auto spins = BackoffPolicy::template spin_count<op>(iteration, rand_seed, aggressiveness);
-			spin(spins);
+
+			// Prefetch before spinning
+			spin(spins >> 1);
+			l.template prefetch<op>();
+			spin((spins >> 1) + (spins & 1));
 
 			return backoff_result::spin;
 		}
@@ -438,9 +442,11 @@ protected:
 		}
 
 		// ... and all shared waiters
-		const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
-		if (unparked)
-			return unparked;
+		{
+			const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
+			if (unparked)
+				return unparked;
+		}
 
 		return 0;
 	}
@@ -538,12 +544,13 @@ protected:
 			if constexpr (collect_statistics)
 				++debug_statistics.iterations;
 
-			// Once backoff policy decides to park us, register us as parked.
 			bool parked = false;
 			const auto park_predicate = [&]() {
+				// Check if park is still needed
 				return can_acquire_lock<acquisition_primality::waiter>(l.load(memory_order::relaxed));
 			};
 			const auto on_park = [&]() {
+				// Once backoff policy decides to park us, register us as parked.
 				l.template register_unwait_and_park<op>();
 				parked = true;
 				

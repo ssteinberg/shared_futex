@@ -82,18 +82,50 @@ struct shared_futex_pico_policy {
 };
 
 /*
- *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 8-bits.
+ *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 32-bits.
  */
-struct shared_futex_pico_tsx_hle_policy {
+struct shared_futex_micro_policy {
 	static constexpr std::size_t alignment = 1;
-	using latch_data_type = std::uint8_t;
+	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 6;
+	static constexpr std::size_t shared_bits = 10;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
 	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::none;
 	static constexpr bool count_waiters = false;
+	using features = std::tuple<>;
+};
+
+/*
+ *	@brief	Policy without parking or waiters counters and TSX HLE, used to fit a futex into 32-bits.
+ */
+struct shared_futex_micro_tsx_hle_policy {
+	static constexpr std::size_t alignment = 1;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t upgradeable_bits = 1;
+	static constexpr std::size_t exclusive_bits = 1;
+
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::none;
+	static constexpr bool count_waiters = false;
+	using features = std::tuple<shared_futex_features::use_transactional_hle_exclusive>;
+};
+
+/*
+ *	@brief	Policy with TSX HLE feature
+ */
+struct shared_futex_tsx_hle_policy {
+	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	using latch_data_type = std::uint32_t;
+
+	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t upgradeable_bits = 10;
+	static constexpr std::size_t exclusive_bits = 10;
+
+	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
+	static constexpr bool count_waiters = true;
 	using features = std::tuple<shared_futex_features::use_transactional_hle_exclusive>;
 };
 
@@ -204,20 +236,28 @@ struct exponential_backoff_policy {
 
 private:
 	static constexpr float sqrt_spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
-		return 10.f;		// +100 pause instructions on last iteration, on the scale of ~400 nanoseconds.
+		return 12.f;		// ~150 pause instructions on last iteration, on the scale of ~500-600 nanoseconds.
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return
 			aggressiveness == backoff_aggressiveness::aggressive ? 256 :
-			aggressiveness == backoff_aggressiveness::normal ? 96 :
-			aggressiveness == backoff_aggressiveness::relaxed ? 64 :
+			aggressiveness == backoff_aggressiveness::normal ? 128 :
+			aggressiveness == backoff_aggressiveness::relaxed ? 32 :
 			0;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
-		return aggressiveness == backoff_aggressiveness::relaxed ? 96ull : 64ull;
+		return
+			aggressiveness == backoff_aggressiveness::aggressive ? 24ull :
+			aggressiveness == backoff_aggressiveness::normal ? 48ull :
+			32ull;
 	}
 	static std::size_t spin_symmetry_breaker(backoff_aggressiveness aggressiveness) noexcept {
-		const auto max = spin_base_count(aggressiveness);
+		// Will return a random count between 0 and max
+		const auto max = 
+			aggressiveness == backoff_aggressiveness::aggressive ? 64ull :
+			aggressiveness == backoff_aggressiveness::normal ? 80ull :
+			96ull;
+
 		const auto rdtsc = __rdtsc();
 		return static_cast<std::size_t>(rdtsc % max);
 	}
