@@ -133,7 +133,6 @@ private:
 	const T* this_pointer() const noexcept { return reinterpret_cast<T*>(&var); }
 
 	__atomic_tsx_force_inline static void tsx_store(T *dst, T desired, memory_order order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
 		assert(order == memory_order::xrelease && "Incorrect memory order (Only XRELEASE allowed for TSX store operation)");
 		
 		if constexpr (_atomic_tsx_detail::is_msvc) {
@@ -148,8 +147,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_exchange(T* dst, T desired, memory_order order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -178,8 +175,6 @@ private:
 	__atomic_tsx_force_inline static bool tsx_compare_exchange(T *dst, T &expected, T desired,
 															   _atomic_tsx_detail::memory_order_helper success,
 															   bool weak = false) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				const auto prev = success == memory_order::xacquire ?
@@ -218,8 +213,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_fetch_add(T *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -246,8 +239,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_fetch_sub(T *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -274,8 +265,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_fetch_and(T *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -302,8 +291,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_fetch_or(T *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -330,8 +317,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static T tsx_fetch_xor(T *dst, T arg, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -358,8 +343,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static bool tsx_bts(T *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?
@@ -386,8 +369,6 @@ private:
 	}
 	
 	__atomic_tsx_force_inline static bool tsx_btr(T *dst, int bit, _atomic_tsx_detail::memory_order_helper order) noexcept {
-		static_assert(is_atomic_tsx_capable_v<T>, "TSX operations only supported on 32/64-bit data types");
-
 		if constexpr (_atomic_tsx_detail::is_msvc) {
 			if constexpr (is64wide) {
 				return order == memory_order::xacquire ?

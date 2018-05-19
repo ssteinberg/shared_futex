@@ -477,7 +477,7 @@ private:
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
-			const auto new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
+			const latch_data_type new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
 			if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
 				data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
 		}
