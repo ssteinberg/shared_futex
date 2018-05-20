@@ -97,18 +97,18 @@ public:
 	lock_guard(lock_guard &&o) noexcept : l(std::exchange(o.l, nullptr)), locker(std::move(o.locker)) {}
 
 	lock_guard &operator=(lock_guard &&o) noexcept {
-		SharedFutex{ std::move(*this) };
+		{
+			// Moves out of this and unlocks if needed
+			lock_guard temp = std::move(*this);
+		}
+
 		l = std::exchange(o.l, nullptr);
 		locker = std::move(o.locker);
 
 		return *this;
 	}
 
-	friend void swap(lock_guard<SharedFutex, LockingProtocol> &a, lock_guard<SharedFutex, LockingProtocol> &b) noexcept {
-		std::swap(a.l, b.l);
-		std::swap(a.locker, b.locker);
-	}
-	void swap(lock_guard &o) noexcept { swap(*this, o); }
+	void swap(lock_guard &o) noexcept { std::swap(*this, o); }
 	
 	/*
 	 *	@brief	Acquires lock. Blocks until lock acquisition is successful.
@@ -721,7 +721,7 @@ thread_local random_generator shared_futex_locking_protocol<Latch, BackoffPolicy
 /*
  *	@brief	Locks the futex in shared mode and returns a lock_guard.
  */
-template <typename BackoffPolicy, typename SharedFutex, typename... Args>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 lock_guard<
 	SharedFutex,
 	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_shared>
@@ -736,7 +736,7 @@ make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
 /*
  *	@brief	Locks the futex in upgradeable mode and returns a lock_guard.
  */
-template <typename BackoffPolicy, typename SharedFutex, typename... Args>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 lock_guard<
 	SharedFutex,
 	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_upgradeable>
@@ -751,7 +751,7 @@ make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
 /*
  *	@brief	Locks the futex in exclusive mode and returns a lock_guard.
  */
-template <typename BackoffPolicy, typename SharedFutex, typename... Args>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 lock_guard<
 	SharedFutex, 
 	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
@@ -771,7 +771,7 @@ make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 *	
 *	@return	An exclusive guard that owns the lock
 */
-template <typename BackoffPolicy, typename SharedFutex, typename P, typename B>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename P, typename B>
 auto upgrade_lock(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::operation::lock_upgradeable>> &&upgradeable_guard) noexcept {
 	// Upgradeable guard owns lock?
 	assert(upgradeable_guard.owns_lock());
@@ -796,7 +796,7 @@ auto upgrade_lock(lock_guard<SharedFutex, shared_futex_detail::shared_futex_lock
 *
 *	@return	Returns a pair of a success flag and the new exclusive guard, if successful.
 */
-template <typename BackoffPolicy, typename SharedFutex, typename P, typename B, typename Clock, typename Duration>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename P, typename B, typename Clock, typename Duration>
 auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::operation::lock_upgradeable>> &&upgradeable_guard, const std::chrono::time_point<Clock, Duration> &until) noexcept {
 	using exclusive_lock_guard = lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::operation::lock_exclusive>>;
 
@@ -824,7 +824,7 @@ auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_detail::shared_
 *
 *	@return	Returns a pair of a success flag and the new exclusive guard, if successful.
 */
-template <typename BackoffPolicy, typename SharedFutex, typename P, typename B, typename Rep, typename Period>
+template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename P, typename B, typename Rep, typename Period>
 auto try_upgrade_lock_for(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::operation::lock_upgradeable>> &&upgradeable_guard, const std::chrono::duration<Rep, Period> &duration) noexcept {
 	const auto until = std::chrono::steady_clock::now() + duration;
 	return try_upgrade_lock_until<BackoffPolicy>(std::move(upgradeable_guard), until);
