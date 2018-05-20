@@ -31,7 +31,9 @@ public:
 // Partial specialization for 'parking lot' policy
 template <>
 class shared_futex_parking<shared_futex_parking_policy::parking_lot> {
-	using parking_lot_t = parking_lot<>;
+	using ParkSlot = std::uint64_t;
+	
+	using parking_lot_t = parking_lot<ParkSlot>;
 	parking_lot_t parking;
 
 public:
@@ -46,7 +48,7 @@ public:
 	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
 	*/
-	template <operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename ParkSlot, typename Clock, typename Duration>
+	template <operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
 									  OnPark &&on_park,
 									  PostPark &&post_park,
@@ -55,7 +57,7 @@ public:
 		return parking.park_until(std::forward<ParkPredicate>(park_predicate),
 								  std::forward<OnPark>(on_park),
 								  std::forward<PostPark>(post_park),
-								  std::forward<ParkSlot>(park_slot),
+								  std::move(park_slot),
 								  until).first;
 	}
 	
@@ -63,12 +65,12 @@ public:
 	 *	@brief	Unparks threads of a specified op.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <unpark_tactic tactic, operation op, typename ParkSlot>
+	template <unpark_tactic tactic, operation op>
 	std::size_t unpark(const ParkSlot &park_slot) noexcept {
 		// Choose function for given unpark tactic
 		const auto unparking_function = tactic == unpark_tactic::all ?
-			&parking_lot_t::unpark_all<ParkSlot> :
-			&parking_lot_t::unpark_one<ParkSlot>;
+			&parking_lot_t::unpark_all<> :
+			&parking_lot_t::unpark_one<>;
 
 		// Attempt unpark
 		return std::invoke(unparking_function, parking, park_slot);
@@ -84,17 +86,22 @@ class shared_futex_parking<shared_futex_parking_policy::shared_local> {
 	std::condition_variable_any shared_cond_var;
 	mutex_t shared_cond_var_lock;
 
+	using ParkSlot = std::uint64_t;
+
 	// Parking lot for non-shared
-	using parking_lot_t = parking_lot<>;
+	using parking_lot_t = parking_lot<ParkSlot>;
 	parking_lot_t parking;
 
 private:
-	template <typename ParkPredicate, typename CondVar, typename Mutex, typename Clock, typename Duration>
+	template <typename ParkPredicate, typename OnPark, typename CondVar, typename Mutex, typename Clock, typename Duration>
 	static parking_lot_wait_state wait(ParkPredicate &&park_predicate,
+									   OnPark &&on_park,
 									   CondVar &cond_var,
 									   Mutex &m,
 									   const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		std::unique_lock<Mutex> ul(m);
+
+		on_park();
 
 		// Check predicate under lock
 		if (park_predicate())
@@ -129,7 +136,7 @@ public:
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
 	template <
-		operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename ParkSlot, typename Clock, typename Duration,
+		operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration,
 		typename = std::enable_if_t<op != operation::lock_shared>
 	>
 	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
@@ -140,7 +147,7 @@ public:
 		return parking.park_until(std::forward<ParkPredicate>(park_predicate),
 								  std::forward<OnPark>(on_park),
 								  std::forward<PostPark>(post_park),
-								  std::forward<ParkSlot>(park_slot),
+								  std::move(park_slot),
 								  until).first;
 	}
 
@@ -155,7 +162,6 @@ public:
 									  OnPark &&on_park,
 									  PostPark &&post_park,
 									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
-		on_park();
 		const auto result = wait(std::forward<ParkPredicate>(park_predicate),
 								 std::forward<OnPark>(on_park),
 								 shared_cond_var,
@@ -198,14 +204,14 @@ public:
 	 *	@return	Count of threads successfully unparked
 	 */
 	template <
-		unpark_tactic tactic, operation op, typename ParkSlot,
+		unpark_tactic tactic, operation op,
 		typename = std::enable_if_t<op != operation::lock_shared>
 	>
 	std::size_t unpark(const ParkSlot &park_slot) noexcept {
 		// Choose function for given unpark tactic
 		const auto unparking_function = tactic == unpark_tactic::all ?
-			&parking_lot_t::unpark_all<ParkSlot> :
-			&parking_lot_t::unpark_one<ParkSlot>;
+			&parking_lot_t::unpark_all<> :
+			&parking_lot_t::unpark_one<>;
 
 		// Attempt unpark
 		return std::invoke(unparking_function, parking, park_slot);
