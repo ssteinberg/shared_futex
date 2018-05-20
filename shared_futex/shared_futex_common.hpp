@@ -88,9 +88,9 @@ enum class backoff_operation : std::uint8_t {
 
 enum class backoff_result : std::uint8_t {
 	unparked,
-	unparked_and_unregistered,
 	park_predicate_triggered,
 	timeout,
+	unparked_and_unregistered,
 	spin,
 };
 

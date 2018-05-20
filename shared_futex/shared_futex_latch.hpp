@@ -638,9 +638,10 @@ public:
 	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	template <operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
 	parking_lot_wait_state park(ParkPredicate &&park_predicate,
 								OnPark &&on_park,
+								PostPark &&post_park,
 								const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
@@ -652,6 +653,7 @@ public:
 			// Park shared in local slot
 			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
 													 std::forward<OnPark>(on_park),
+													 std::forward<PostPark>(post_park),
 													 until);
 		}
 		else if constexpr (parking_allowed) {
@@ -659,6 +661,7 @@ public:
 			auto key = parking_lot_parking_key<op>();
 			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
 													 std::forward<OnPark>(on_park),
+													 std::forward<PostPark>(post_park),
 													 std::move(key),
 													 until);
 		}
@@ -739,6 +742,26 @@ public:
 				waiters_descriptor dw = {};
 				dw.template inc_waiters<op>(1);
 				bits -= static_cast<waiters_counter_type>(dw);
+			}
+
+			data.latch.waiters.fetch_add(bits, order);
+		}
+	}
+	// Registers parked thread
+	template <operation op>
+	void register_park(memory_order order = memory_order::release) noexcept {
+		if constexpr (debug_shared_futex)
+			assert(parking_allowed && "Parking not allowed");
+		
+		if constexpr (should_count_parked<op>()) {
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
+
+			waiters_counter_type bits = 0;
+			if constexpr (should_count_parked<op>()) {
+				waiters_descriptor dp = {};
+				dp.template inc_parked<op>(1);
+				bits += static_cast<waiters_counter_type>(dp);
 			}
 
 			data.latch.waiters.fetch_add(bits, order);
