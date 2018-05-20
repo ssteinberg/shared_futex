@@ -226,16 +226,18 @@ class parking_lot {
 	>;
 
 private:
-	template <typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	template <typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
 	park_return_t wait(parking_lot_detail::parking_lot_slot &park,
 					   node_t &node,
 					   ParkPredicate &&park_predicate,
 					   OnPark &&on_park,
+					   PostPark &&post_park,
 					   const std::chrono::time_point<Clock, Duration> &until) {
 		// Park
 		on_park();
 		auto wait_result = node.wait_until(std::forward<ParkPredicate>(park_predicate),
 										   until);
+		post_park();
 
 		// Unregister node if wait has not been performed or timed-out,
 		// Otherwise the signaling thread will do the unregistering, this avoids a deadlock on the park mutex.
@@ -261,28 +263,65 @@ private:
 public:
 	/*
 	 *  @brief	If park_predicate returns true, parks the calling thread in the specified key indefinitely.
+	 *	@param	on_park		Closure that will be called just before attempting to park. on_park being called does not mean that parking is
+	 *						going to be actually performed, as signalling, timeout or park_predicate might be triggered.
 	 */
 	template <typename K, typename ParkPredicate, typename OnPark>
 	park_return_t park(ParkPredicate &&park_predicate,
 					   OnPark &&on_park,
 					   K &&key) {
+		return park(std::forward<ParkPredicate>(park_predicate),
+					std::forward<OnPark>(on_park),
+					[]() {},
+					std::forward<K>(key));
+	}
+	/*
+	 *  @brief	If park_predicate returns true, parks the calling thread in the specified key indefinitely.
+	 *	@param	on_park		Closure that will be called just before attempting to park. on_park being called does not mean that parking is
+	 *						going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *	@param	post_park	Closure that will be called immediately after parking, irregardless of parking termination reason.
+	 */
+	template <typename K, typename ParkPredicate, typename OnPark, typename PostPark>
+	park_return_t park(ParkPredicate &&park_predicate,
+					   OnPark &&on_park,
+					   PostPark &&post_park,
+					   K &&key) {
 		return park_until(std::forward<ParkPredicate>(park_predicate),
 						  std::forward<OnPark>(on_park),
+						  std::forward<PostPark>(post_park),
 						  std::forward<K>(key),
 						  std::chrono::steady_clock::time_point::max());
 	}
 	/*
 	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
+	 *	@param	on_park		Closure that will be called just before attempting to park. on_park being called does not mean that parking is
+	 *						going to be actually performed, as signalling, timeout or park_predicate might be triggered.
 	*/
-	template <typename K, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
+	template <typename K, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
 	park_return_t park_until(ParkPredicate &&park_predicate,
 							 OnPark &&on_park,
 							 K &&key,
 							 const std::chrono::time_point<Clock, Duration> &until) {
-		if (park_predicate())
-			return { parking_lot_wait_state::park_validation_failed, std::nullopt };
-
+		return park_until(std::forward<ParkPredicate>(park_predicate),
+						  std::forward<OnPark>(on_park),
+						  []() {},
+						  std::forward<K>(key),
+						  until);
+	}
+	/*
+	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
+	 *			or the thread was unparked. 
+	 *	@param	on_park		Closure that will be called just before attempting to park. on_park being called does not mean that parking is
+	 *						going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *	@param	post_park	Closure that will be called immediately after parking, irregardless of parking termination reason.
+	*/
+	template <typename K, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	park_return_t park_until(ParkPredicate &&park_predicate,
+							 OnPark &&on_park,
+							 PostPark &&post_park,
+							 K &&key,
+							 const std::chrono::time_point<Clock, Duration> &until) {
 		// Create new node
 		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
 		node_t node(this, std::forward<K>(key));
@@ -297,6 +336,7 @@ public:
 		return wait(park, node,
 					std::forward<ParkPredicate>(park_predicate),
 					std::forward<OnPark>(on_park),
+					std::forward<PostPark>(post_park),
 					until);
 	}
 

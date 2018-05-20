@@ -238,11 +238,7 @@ struct shared_futex_backoff_protocol {
 		if (selected_backoff_op == backoff_operation::spin) {
 			// Choose spin count
 			const auto spins = BackoffPolicy::template spin_count<op>(iteration, rand_seed, aggressiveness);
-
-			// Prefetch before spinning
-			spin(spins >> 1);
-			l.template prefetch<op>();
-			spin((spins >> 1) + (spins & 1));
+			spin(spins);
 
 			return backoff_result::spin;
 		}
@@ -257,8 +253,10 @@ struct shared_futex_backoff_protocol {
 
 			// Park
 			if (selected_backoff_op == backoff_operation::park) {
+				// Prefetch latch immediately post park
 				const auto wait_state = l.template park<op>(std::forward<ParkPredicate>(park_predicate),
 															std::forward<OnPark>(on_park),
+															[&]() { l.template prefetch<op>(); },
 															until);
 		
 				if (wait_state == parking_lot_wait_state::signaled) {
