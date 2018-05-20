@@ -173,7 +173,7 @@ struct spinlock_backoff_policy {
 	static constexpr std::size_t max_spin_count = 10;
 
 	template <shared_futex_detail::operation, typename Clock, typename Duration>
-	static constexpr backoff_operation select_operation(std::size_t iteration, backoff_aggressiveness, float,
+	static constexpr backoff_operation select_operation(std::size_t iteration, float, backoff_aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if ((iteration % 100) == 0 &&
 			until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
