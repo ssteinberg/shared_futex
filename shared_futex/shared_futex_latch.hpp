@@ -46,6 +46,8 @@ template <typename FutexPolicy>
 class shared_futex_default_latch {
 public:
 	using futex_policy = FutexPolicy;
+	static constexpr shared_futex_parking_policy parking_policy = futex_policy::parking_policy;
+
 	// Our list of supported features
 	using supported_features = std::tuple<
 		shared_futex_features::use_transactional_hle_exclusive,
@@ -102,7 +104,7 @@ private:
 	}
 
 	static constexpr bool count_waiters = futex_policy::count_waiters;
-	static constexpr bool parking_allowed = futex_policy::parking_policy != shared_futex_parking_policy::none;
+	static constexpr bool parking_allowed = parking_policy != shared_futex_parking_policy::none;
 	// If we neither allow parking nor count waiter we can dispense with the waiters counter.
 	static constexpr bool has_waiters_counter = count_waiters || parking_allowed;
 	static constexpr bool count_shared_parked = true;
@@ -143,13 +145,13 @@ public:
 	using waiters_counter_type = std::int64_t;
 	using parking_key_t = std::uint64_t;
 	
-	using latch_descriptor = latch_descriptor<latch_data_type, futex_policy::parking_policy>;
+	using latch_descriptor = latch_descriptor<latch_data_type, parking_policy>;
 	using waiters_descriptor = waiters_descriptor<
 		waiters_counter_type,
 		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
 		count_shared_parked, count_waiters
 	>;
-	using parking_lot_t = shared_futex_parking<futex_policy::parking_policy>;
+	using parking_lot_t = shared_futex_parking<parking_policy>;
 
 private:
 	using latch_atomic_t = atomic_tsx<latch_data_type>;
@@ -239,7 +241,8 @@ private:
 		
 		// Attempt a transactions, and retry up to a fixed number of tries depending on returned abort code.
 		for (auto i=0;; ++i) {
-			tsx_start = transactional_memory::transaction_begin().first;
+			const auto begin_result = transactional_memory::transaction_begin();
+			tsx_start = begin_result.first;
 
 			const auto should_retry = tsx_start_has_flag(transactional_memory::status::abort_retry);
 			if (should_retry && i < max_tsx_retries)
@@ -454,7 +457,7 @@ private:
 			if constexpr (collect_statistics)
 				++debug_statistics.transactional_lock_elision_success;
 
-			_xend();
+			transactional_memory::transaction_end();
 			return true;
 		}
 
@@ -622,6 +625,19 @@ public:
 	}
 
 	/*
+	 *	@brief	Prefetchs latch into caches in anticipation of latch mutation
+	 */
+	template <operation op>
+	void prefetch() const noexcept {
+		// No prefetch if we use slots and this is a shared operation
+		if constexpr (use_slots && op == operation::lock_shared)
+			return;
+
+		// Prefetch for writing
+		data.latch[0]->prefetchw();
+	}
+
+	/*
 	 *	@brief	Attempts unparking of threads of a specified op using a given unpark tactic.
 	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
 	 *	@return	Count of threads successfully unparked
@@ -633,23 +649,28 @@ public:
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
 
+		parking_lot_wait_state result = parking_lot_wait_state::signaled;
+
 		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
 			// Park shared in local slot
-			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-												   std::forward<OnPark>(on_park),
-												   until);
+			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
+													 std::forward<OnPark>(on_park),
+													 until);
 		}
 		else if constexpr (parking_allowed) {
 			// Wait
 			auto key = parking_lot_parking_key<op>();
-			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-												   std::forward<OnPark>(on_park),
-												   std::move(key),
-												   until);
+			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
+													 std::forward<OnPark>(on_park),
+													 std::move(key),
+													 until);
 		}
 
-		return parking_lot_wait_state::signaled;
+		// Prefetch after park, as soon as possible.
+		prefetch<op>();
+
+		return result;
 	}
 	
 	/*

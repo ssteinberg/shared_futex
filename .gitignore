@@ -1,3 +1,5 @@
 test/
 .vs/
 *.TMP
+Debug/
+x64/

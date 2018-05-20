@@ -1,7 +1,6 @@
 // shared_futex
 // © Shlomi Steinberg, 2015-2018
 
-#include "stdafx.h"
 #include "shared_futex.hpp"
 
 #include <thread>

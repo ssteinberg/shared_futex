@@ -130,7 +130,7 @@ private:
 	}
 	
 	T* this_pointer() noexcept { return reinterpret_cast<T*>(&var); }
-	const T* this_pointer() const noexcept { return reinterpret_cast<T*>(&var); }
+	const T* this_pointer() const noexcept { return reinterpret_cast<const T*>(&var); }
 
 	__atomic_tsx_force_inline static void tsx_store(T *dst, T desired, memory_order order) noexcept {
 		assert(order == memory_order::xrelease && "Incorrect memory order (Only XRELEASE allowed for TSX store operation)");
@@ -767,7 +767,7 @@ static __atomic_tsx_force_inline std::pair<status, abort_code> transaction_begin
 
 	// Check abort status
 	auto ret = static_cast<status>(0);
-	if (begin == 0) {
+	if (begin == 0u) {
 		// Return code of 0 indicates an abort due to system call, a serializing instruction, touching unmapped pages or other obscure
 		// reasons. See https://software.intel.com/en-us/forums/intel-moderncode-for-parallel-architectures/topic/658265
 		ret = ret | status::abort_system;
@@ -784,6 +784,7 @@ static __atomic_tsx_force_inline std::pair<status, abort_code> transaction_begin
 		ret = ret | status::abort_nested;
 	if (begin & _XABORT_RETRY)
 		ret = ret | status::abort_retry;
+
 	if (ret == static_cast<status>(0))
 		ret = status::abort_unknown;
 
