@@ -32,7 +32,7 @@ public:
 private:
 	using mutex_t = std::mutex;
 
-	std::function<bool()> park_predicate;
+	std::function<bool()> predicate;
 	mutex_t m;
 	std::condition_variable cv;
 
@@ -46,25 +46,18 @@ private:
 
 protected:
 	/*
-	 *	@brief	Attempts to signal node. Returns true on success, false if predicate is unsatisfied.
+	 *	@brief	Attempts to signal node.
 	 */
-	bool signal() noexcept {
-		// Check predicate
-		if (!park_predicate())
-			return false;
-
-		// Signal
+	void signal() noexcept {
 		std::unique_lock<mutex_t> ul(m);
 
 		signaled = true;
 		cv.notify_one();
-
-		return true;
 	}
 
 public:
 	template <typename P, typename K>
-	parking_lot_node_base(P* id, K &&key) {
+	parking_lot_node_base(P* id, K &&key) noexcept {
 		using T = std::remove_cv_t<std::remove_reference_t<K>>;
 
 		static_assert(std::is_trivially_destructible_v<T>, "key must be trivially destructible");
@@ -86,7 +79,10 @@ public:
 
 	template <typename Pred>
 	void set_predicate(Pred&& pred) noexcept {
-		park_predicate = std::forward<Pred>(pred);
+		predicate = std::forward<Pred>(pred);
+	}
+	bool check_predicate() const noexcept {
+		return predicate && predicate();
 	}
 
 	/*
@@ -106,7 +102,7 @@ public:
 	 *	@return	Wait-performed boolean and the wait state as a pair.
 	 */
 	template <typename Clock, typename Duration>
-	std::pair<bool, parking_lot_wait_state> wait_until(const std::chrono::time_point<Clock, Duration> &until) {
+	[[nodiscard]] std::pair<bool, parking_lot_wait_state> wait_until(const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		const auto pred = [&]() { return signaled; };
 
 		std::atomic_thread_fence(std::memory_order_acquire);
@@ -146,20 +142,16 @@ public:
 
 	/*
 	*	@brief	Signals the node and constructs a Data object to be consumed by the waiter.
-	*	@return	True on success, false if predicate is unsatisfied.
 	*/
 	template <typename... Args>
-	bool signal(Args&&... args) noexcept {
-		const auto result = parking_lot_node_base::signal();
-		if (result)
-			data.emplace(std::forward<Args>(args)...);
-
-		return result;
+	void signal(Args&&... args) noexcept {
+		data.emplace(std::forward<Args>(args)...);
+		parking_lot_node_base::signal();
 	}
 	/*
 	*	@brief	Extracts the stored data object
 	*/
-	Data&& retrieve_data() && noexcept { return std::move(data).value(); }
+	[[nodiscard]] Data&& retrieve_data() && noexcept { return std::move(data).value(); }
 };
 template <>
 class parking_lot_node<void> final : public parking_lot_node_base {
@@ -233,19 +225,21 @@ public:
 
 template <typename Key, typename NodeData = void>
 class parking_lot {
-	using node_t = parking_lot_detail::parking_lot_node<NodeData>;
 	using park_return_t = std::conditional_t<
 		!std::is_void_v<NodeData>,
 		std::pair<parking_lot_wait_state, std::optional<NodeData>>,
 		std::pair<parking_lot_wait_state, std::optional<int>>
 	>;
 
+public:
+	using node_t = parking_lot_detail::parking_lot_node<NodeData>;
+
 private:
 	template <typename PostPark, typename Clock, typename Duration>
 	park_return_t wait(parking_lot_detail::parking_lot_slot &park,
 					   node_t &node,
 					   PostPark &&post_park,
-					   const std::chrono::time_point<Clock, Duration> &until) {
+					   const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Park
 		auto wait_result = node.wait_until(until);
 		post_park();
@@ -275,18 +269,18 @@ public:
 	/*
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*.
 	 *  
-	 *  @param	park_predicate	Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
-	 *							as well and only unparks if park_predicate returns true.
+	 *  @param	predicate		Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
+	 *							as well and only unparks if predicate returns true.
 	 *							Called while holding slot lock.
 	 *	@param	on_park			Closure that will be called just before attempting to park. on_park being called does not mean that parking is
-	 *							going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *							going to be actually performed, as signalling, timeout or predicate might be triggered.
 	 *							Called while holding slot lock.
 	 */
-	template <typename ParkPredicate, typename OnPark>
-	park_return_t park(ParkPredicate &&park_predicate,
+	template <typename Predicate, typename OnPark>
+	park_return_t park(Predicate &&predicate,
 					   OnPark &&on_park,
-					   Key &&key) {
-		return park(std::forward<ParkPredicate>(park_predicate),
+					   Key &&key) noexcept {
+		return park(std::forward<Predicate>(predicate),
 					std::forward<OnPark>(on_park),
 					[]() {},
 					std::move(key));
@@ -294,21 +288,21 @@ public:
 	/*
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*.
 	 *  
-	 *  @param	park_predicate	Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
-	 *							as well and only unparks if park_predicate returns true.
+	 *  @param	predicate		Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
+	 *							as well and only unparks if predicate returns true.
 	 *							Called while holding slot lock.
 	 *	@param	on_park			Closure that will be called just before attempting to park. on_park being called does not mean that parking is
-	 *							going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *							going to be actually performed, as signalling, timeout or predicate might be triggered.
 	 *							Called while holding slot lock.
 	 *	@param	post_park		Closure that will be called immediately after parking, irregardless of parking termination reason.
 	 *							Call not guarded by a lock.
 	 */
-	template <typename ParkPredicate, typename OnPark, typename PostPark>
-	park_return_t park(ParkPredicate &&park_predicate,
+	template <typename Predicate, typename OnPark, typename PostPark>
+	park_return_t park(Predicate &&predicate,
 					   OnPark &&on_park,
 					   PostPark &&post_park,
-					   Key &&key) {
-		return park_until(std::forward<ParkPredicate>(park_predicate),
+					   Key &&key) noexcept {
+		return park_until(std::forward<Predicate>(predicate),
 						  std::forward<OnPark>(on_park),
 						  std::forward<PostPark>(post_park),
 						  std::move(key),
@@ -318,19 +312,19 @@ public:
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*
 	 *			or timeout has expired.
 	 *  
-	 *  @param	park_predicate	Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
-	 *							as well and only unparks if park_predicate returns true.
+	 *  @param	predicate		Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
+	 *							as well and only unparks if predicate returns true.
 	 *							Called while holding slot lock.
 	 *	@param	on_park			Closure that will be called just before attempting to park. on_park being called does not mean that parking is
-	 *							going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *							going to be actually performed, as signalling, timeout or predicate might be triggered.
 	 *							Called while holding slot lock.
 	*/
-	template <typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
-	park_return_t park_until(ParkPredicate &&park_predicate,
+	template <typename Predicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	park_return_t park_until(Predicate &&predicate,
 							 OnPark &&on_park,
 							 Key &&key,
-							 const std::chrono::time_point<Clock, Duration> &until) {
-		return park_until(std::forward<ParkPredicate>(park_predicate),
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
+		return park_until(std::forward<Predicate>(predicate),
 						  std::forward<OnPark>(on_park),
 						  []() {},
 						  std::move(key),
@@ -340,21 +334,21 @@ public:
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*
 	 *			or timeout has expired.
 	 *  
-	 *  @param	park_predicate	Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
-	 *							as well and only unparks if park_predicate returns true.
+	 *  @param	predicate		Called after on_park and if it returns false thread is parked. When unparking the unparker checks the predicate
+	 *							as well and only unparks if predicate returns true.
 	 *							Called while holding slot lock.
 	 *	@param	on_park			Closure that will be called just before attempting to park. on_park being called does not mean that parking is
-	 *							going to be actually performed, as signalling, timeout or park_predicate might be triggered.
+	 *							going to be actually performed, as signalling, timeout or predicate might be triggered.
 	 *							Called while holding slot lock.
 	 *	@param	post_park		Closure that will be called immediately after parking, irregardless of parking termination reason.
 	 *							Call not guarded by a lock.
 	*/
-	template <typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
-	park_return_t park_until(ParkPredicate &&park_predicate,
+	template <typename Predicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	park_return_t park_until(Predicate &&predicate,
 							 OnPark &&on_park,
 							 PostPark &&post_park,
 							 Key &&key,
-							 const std::chrono::time_point<Clock, Duration> &until) {
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Create new node
 		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
 		node_t node(this, std::move(key));
@@ -368,12 +362,12 @@ public:
 			
 			// Check if we still need to park, this is needed as the signaling condition is not guarded by the local mutex, creating 
 			// a race against the cv.
-			if (park_predicate())
+			if (predicate())
 				return { parking_lot_wait_state::park_validation_failed, std::nullopt };
 
 			// Finally add node to slot and forward the predicate to the node
 			park.push_back(&node);
-			node.set_predicate(std::forward<ParkPredicate>(park_predicate));
+			node.set_predicate(std::forward<Predicate>(predicate));
 		}
 
 		// Park
@@ -390,28 +384,30 @@ public:
 	 *	@return	Number of nodes that were signaled
 	 */
 	template <typename... Args>
-	std::size_t unpark_one(const Key &key, Args&&... args) {
+	std::size_t unpark_one(const Key &key, Args&&... args) noexcept {
 		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
 
 		// Unpark one
 		{
 			std::unique_lock<parking_lot_detail::parking_lot_slot::mutex_t> bucket_lock(park.m);
 			
-			for (auto node = park.head; node; ) {
-				// Signalling might destroy the node once wait_until() goes out of scope, take a copy of next.
-				auto next = node->next;
-
+			// Signalling might destroy the node once wait_until() goes out of scope, take a copy of next each iteration.
+			auto node = park.head;
+			for (decltype(node) next = node ? node->next : nullptr; 
+				 node; 
+				 node = next, next = node ? node->next : nullptr) {
 				if (node->id_equals(this, key)) {
 					assert(!node->is_signalled());
+					auto n = static_cast<node_t*>(node);
+
+					if (!n->check_predicate())
+						continue;
 
 					park.erase(node);
-					if (!static_cast<node_t*>(node)->signal(std::forward<Args>(args)...))
-						continue;
+					n->signal(std::forward<Args>(args)...);
 
 					return 1;
 				}
-
-				node = next;
 			}
 		}
 
@@ -425,88 +421,36 @@ public:
 	 *	@return	Number of nodes that were signaled
 	 */
 	template <typename... Args>
-	std::size_t unpark_all(const Key &key, const Args&... args) {
+	std::size_t unpark_all(const Key &key, const Args&... args) noexcept {
 		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
 		std::size_t count = 0;
 
 		// Unpark all
 		{
 			std::unique_lock<parking_lot_detail::parking_lot_slot::mutex_t> bucket_lock(park.m);
-
-			for (auto node = park.head; node; ) {
-				// Signalling might destroy the node once wait_until() goes out of scope, take a copy of next.
-				auto next = node->next;
-
+			
+			// Signalling might destroy the node once wait_until() goes out of scope, take a copy of next each iteration.
+			auto node = park.head;
+			for (decltype(node) next = node ? node->next : nullptr; 
+				 node; 
+				 node = next, next = node ? node->next : nullptr) {
 				if (node->id_equals(this, key)) {
 					assert(!node->is_signalled());
+					auto n = static_cast<node_t*>(node);
 
+					if (!n->check_predicate())
+						continue;
+					
 					// Erase from dlist, and unpark.
 					park.erase(node);
-					if constexpr (!std::is_void_v<NodeData>) {
-						if (!static_cast<node_t*>(node)->signal(NodeData(args...)))
-							continue;
-					}
-					else {
-						if (!static_cast<node_t*>(node)->signal())
-							continue;
-					}
+					n->signal(args...);
 
 					++count;
 				}
-
-				node = next;
 			}
 		}
 
 		return count;
-	}
-
-	/*
-	 *	@brief	Attempts to unpark a single node using args. If a node to unpark is found, invokes f and if f returns true will unpark one node
-	 *			similar to unpark_one().
-	 *			
-	 *	@return	Number of nodes that were signaled
-	 */
-	template <typename F, typename... Args>
-	std::size_t try_unpark_one(const Key &key, F&& f, Args&&... args) {
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
-
-		// Unpark one
-		{
-			std::unique_lock<parking_lot_detail::parking_lot_slot::mutex_t> bucket_lock(park.m);
-			
-			for (auto node = park.head; node; ) {
-				// Signalling might destroy the node once wait_until() goes out of scope, take a copy of next.
-				auto next = node->next;
-
-				if (node->id_equals(this, key)) {
-					assert(!node->is_signalled());
-
-					if (!f(1))
-						return 0;
-
-					park.erase(node);
-					if (!static_cast<node_t*>(node)->signal(std::forward<Args>(args)...))
-						continue;
-
-					return 1;
-				}
-
-				node = next;
-			}
-		}
-
-		return 0;
-	}
-
-	/*
-	 *	@brief	Checks atomically if the parking slot is empty
-	 */
-	bool is_slot_empty_hint(const Key &key, std::memory_order mo = std::memory_order_relaxed) const noexcept {
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
-
-		std::atomic_thread_fence(mo);
-		return park.tail == nullptr;
 	}
 };
 

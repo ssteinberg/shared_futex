@@ -205,9 +205,7 @@ public:
  */
 template <typename Latch, typename BackoffPolicy, shared_futex_parking_policy parking_mode>
 struct shared_futex_backoff_protocol {
-	using backoff_result = backoff_result;
-	using backoff_aggressiveness = backoff_aggressiveness;
-	using backoff_operation = backoff_operation;
+	using backoff_return_t = backoff_result;
 	
 	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
 	
@@ -221,16 +219,60 @@ struct shared_futex_backoff_protocol {
 	}
 
 	/*
+	 *	@brief	Parks
+	 */
+	template <
+		operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration,
+		bool b = parking_allowed, typename = std::enable_if_t<b>
+	>
+	static backoff_return_t park(Latch &l,
+								 ParkPredicate &&park_predicate,
+								 OnPark &&on_park,
+								 const std::chrono::time_point<Clock, Duration> &until) noexcept {
+		// Prefetch latch immediately after park
+		const auto post_park = [&]() { l.template prefetch<op>(); };
+
+		// Park
+		auto wait_state = l.template park<op>(std::forward<ParkPredicate>(park_predicate),
+											  std::forward<OnPark>(on_park),
+											  post_park,
+											  until);
+
+		backoff_result result = backoff_result::park_predicate_triggered;
+		if (wait_state == parking_lot_wait_state::signaled) {
+			// Signalled. If unparker is responsible for unregistration, then we know that unregistration was already handled.
+			if constexpr (is_unparker_responsible_for_unregistration<op>())
+				result = backoff_result::unparked_and_unregistered;
+			else
+				result = backoff_result::unparked;
+		}
+		else if (wait_state == parking_lot_wait_state::park_validation_failed) {
+			// Predicate was triggered before parking could take place.
+			result = backoff_result::park_predicate_triggered;
+		}
+		else if (wait_state == parking_lot_wait_state::timeout) {
+			// Wait timed-out
+			result = backoff_result::timeout;
+		}
+		else {
+			// Unreachable
+			assert(false);
+		}
+
+		return result;
+	}
+
+	/*
 	 *	@brief	Implements backoff protocol.
 	 */
 	template <operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
-	static backoff_result pause(Latch &l,
-								backoff_aggressiveness aggressiveness,
-								ParkPredicate &&park_predicate,
-								OnPark &&on_park,
-								const float rand_seed,
-								std::size_t iteration,
-								const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	static backoff_return_t pause(Latch &l,
+								  backoff_aggressiveness aggressiveness,
+								  ParkPredicate &&park_predicate,
+								  OnPark &&on_park,
+								  const float rand_seed,
+								  std::size_t iteration,
+								  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		// Query the policy for backoff operation
 		const backoff_operation selected_backoff_op = BackoffPolicy::template select_operation<op>(iteration, rand_seed, aggressiveness, until);
 
@@ -253,30 +295,10 @@ struct shared_futex_backoff_protocol {
 
 			// Park
 			if (selected_backoff_op == backoff_operation::park) {
-				// Prefetch latch immediately post park
-				const auto wait_state = l.template park<op>(std::forward<ParkPredicate>(park_predicate),
-															std::forward<OnPark>(on_park),
-															[&]() { l.template prefetch<op>(); },
-															until);
-		
-				if (wait_state == parking_lot_wait_state::signaled) {
-					// Signalled. If unparker is responsible for unregistration, then we know that unregistration was already handled.
-					if constexpr (is_unparker_responsible_for_unregistration<op>())
-						return backoff_result::unparked_and_unregistered;
-					else
-						return backoff_result::unparked;
-				}
-				if (wait_state == parking_lot_wait_state::park_validation_failed) {
-					// Predicate was triggered before parking could take place.
-					return backoff_result::park_predicate_triggered;
-				}
-				if (wait_state == parking_lot_wait_state::timeout) {
-					// Wait timed-out
-					return backoff_result::timeout;
-				}
-
-				// Unreachable
-				assert(false);
+				return park<op>(l,
+								std::forward<ParkPredicate>(park_predicate),
+								std::forward<OnPark>(on_park),
+								until);
 			}
 		}
 		else {
@@ -315,7 +337,6 @@ private:
 	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
 
 	// Helper values
-	enum class release_reason { failure, lock_release };
 	using unpark_tactic = unpark_tactic;
 	using operation = operation;
 	using backoff_aggressiveness = backoff_aggressiveness;
@@ -357,7 +378,7 @@ protected:
 	}
 
 	// Unparks thread(s) using given unpark tactic
-	template <unpark_tactic tactic, operation op_to_unpark>
+	template <unpark_tactic tactic, operation op_to_unpark, typename... Args>
 	static std::size_t unpark(Latch &l) noexcept {
 		// Unpark
 		const auto unparked = l.template unpark<tactic, op_to_unpark>();
@@ -428,10 +449,9 @@ protected:
 				return 0;
 		}
 		
-		// ... an exclusive waiter	
+		// ... an exclusive waiter
 		if (can_acquire_lock<acquisition_primality::waiter, operation::lock_exclusive>(latch_value)) {
 			const auto exclusive_parked = waiters_value.template parked<operation::lock_exclusive>();
-
 			if (exclusive_parked > 0) {
 				const auto unparked = unpark<unpark_tactic::one, operation::lock_exclusive>(l);
 				if (unparked)
@@ -482,7 +502,8 @@ protected:
 	// Attempts lock acquisition
 	// For upgrades (operation::upgrade), lock_to_consume must be provided.
 	template <acquisition_primality primality>
-	bool acquire(Latch &l, latch_lock_t &&lock_to_upgrade = {}) noexcept {
+	bool acquire(Latch &l,
+				 latch_lock_t &&lock_to_upgrade = {}) noexcept {
 		const auto validator = [](auto &&latch_value) {
 			return can_acquire_lock<primality, op>(latch_value);
 		};
@@ -492,9 +513,9 @@ protected:
 			lock = l.template upgrade<primality>(std::move(lock_to_upgrade), validator);
 		else
 			lock = l.template acquire<primality, op>(validator);
-		
+
 		if constexpr (collect_statistics) {
-			if (!!lock) {
+			if (owns_lock()) {
 				switch (op) {
 				case operation::lock_shared:
 					++debug_statistics.shared_locks;
@@ -509,15 +530,14 @@ protected:
 			}
 		}
 
-		return !!lock;
+		return owns_lock();
 	}
 
 	// Releases the lock.
-	template <release_reason reason>
 	void release(Latch &l) noexcept {
-		// Release
+		// Release latch
 		l.template release<op>(std::move(lock), memory_order::release);
-
+		
 		// Unpark waiters
 		const auto latch_value = l.load(memory_order::acquire);
 		unpark_if_needed<op>(l, latch_value);
@@ -526,11 +546,12 @@ protected:
 	/*
 	 *	@brief	Periodically reattempts to acquire lock and exceutes backoff policy. Protocol waiting logic is implemented here.
 	 *	
-	 *			For upgrades (operation::upgrade), lock_to_upgrade must be provided.
+	 *			For upgrades (operation::upgrade), valid lock_to_upgrade must be provided.
 	 */
 	template <typename Clock, typename Duration>
-	bool wait_and_try_lock_until(Latch &l, const std::chrono::time_point<Clock, Duration> &until,
-								 latch_lock_t &&lock_to_upgrade = {}) noexcept {
+	bool try_lock_until_impl(Latch &l,
+							 const std::chrono::time_point<Clock, Duration> &until,
+							 latch_lock_t &&lock_to_upgrade = {}) noexcept {
 		// Prepare a random seed
 		const auto rand_seed = rand();
 
@@ -545,11 +566,13 @@ protected:
 			bool parked = false;
 			const auto park_predicate = [&]() {
 				// Check if park is still needed
+				// Parking lot slot lock is held, taking care of synchronization.
 				return can_acquire_lock<acquisition_primality::waiter>(l.load(memory_order::relaxed));
 			};
 			const auto on_park = [&]() {
 				// Once backoff policy decides to park us, register us as parked.
-				l.template register_unwait_and_park<op>();
+				// Parking lot slot lock is held, taking care of synchronization.
+				l.template register_unwait_and_park<op>(memory_order::relaxed);
 				parked = true;
 				
 				if constexpr (collect_statistics)
@@ -658,7 +681,7 @@ public:
 		if (acquire<acquisition_primality::initial>(l))
 			return true;
 
-		return wait_and_try_lock_until(l, until);
+		return try_lock_until_impl(l, until);
 	}
 	/*
 	 *	@brief	Attempts lock upgrade and blocks until lock is acquired or a specified timeout time (optional) has been reached. In case 
@@ -678,7 +701,7 @@ public:
 		if (acquire_result)
 			return true;
 
-		return wait_and_try_lock_until(l, until, std::move(lock_to_consume));
+		return try_lock_until_impl(l, until, std::move(lock_to_consume));
 	}
 
 	/*
@@ -686,7 +709,7 @@ public:
 	 */
 	__shared_futex_force_inline void unlock(Latch &l) noexcept {
 		assert(owns_lock());
-		release<release_reason::lock_release>(l);
+		release(l);
 	}
 	
 	/*
@@ -720,11 +743,7 @@ thread_local random_generator shared_futex_locking_protocol<Latch, BackoffPolicy
  *	@brief	Locks the futex in shared mode and returns a lock_guard.
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
-lock_guard<
-	SharedFutex,
-	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_shared>
-> 
-make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
+auto make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_shared>
@@ -735,11 +754,7 @@ make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
  *	@brief	Locks the futex in upgradeable mode and returns a lock_guard.
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
-lock_guard<
-	SharedFutex,
-	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_upgradeable>
-> 
-make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
+auto make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_upgradeable>
@@ -750,11 +765,7 @@ make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
  *	@brief	Locks the futex in exclusive mode and returns a lock_guard.
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
-lock_guard<
-	SharedFutex, 
-	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
-> 
-make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
+auto make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
