@@ -44,7 +44,7 @@ private:
 	latch_type latch;
 
 public:
-	shared_futex_t() = default;
+	constexpr shared_futex_t() noexcept = default;
 	~shared_futex_t() noexcept = default;
 
 	shared_futex_t(shared_futex_t &&) = delete;

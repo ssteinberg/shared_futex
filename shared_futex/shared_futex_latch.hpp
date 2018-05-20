@@ -528,15 +528,11 @@ private:
 	}
 
 public:
-	shared_futex_default_latch() = default;
+	constexpr shared_futex_default_latch() noexcept = default;
 	shared_futex_default_latch(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch(const shared_futex_default_latch&) = delete;
 	shared_futex_default_latch &operator=(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch &operator=(const shared_futex_default_latch&) = delete;
-	~shared_futex_default_latch() noexcept {
-		// Latch dtored while lock is held or pending?
-		assert(data.latch[primary_slot]->load() == latch_data_type{});
-	}
 
 	latch_descriptor load(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (collect_statistics) {
