@@ -84,11 +84,12 @@ struct latch_descriptor_storage {
 };
 template <typename T, typename Data, shared_futex_parking_policy parking_policy>
 struct latch_descriptor_storage<T, Data, false, parking_policy> {
-	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 4;
+	static constexpr auto shared_consumers_bits = sizeof(Data) * 8 - 8;
 
+	// 6-bit padding allows accessing the lower 8-bit directly (e.g. via 8-bit registers)
 	T lock_held_flag_bit		: 1;
 	T upgradeable_consumers		: 1;
-	T _unused					: 2;
+	T _unused					: 6;
 	T shared_consumers			: shared_consumers_bits;
 };
 template <typename T, shared_futex_parking_policy parking_policy>
@@ -179,37 +180,22 @@ public:
 };
 
 // Partial specializations for possible variations of waiters storage
-template <typename T, typename Data, int shared_bits, int upgradeable_bits, int exclusive_bits, bool count_non_shared_parked, bool count_waiters>
+template <
+	typename T, typename Data, 
+	int shared_bits, int upgradeable_bits, int exclusive_bits,
+	bool count_waiters
+>
 struct waiters_descriptor_storage {};
 template <typename T, typename Data, int shared_bits, int upgradeable_bits, int exclusive_bits>
-struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, false, false> {
-	// Parked counters
-	T upgradeable_parked			: upgradeable_bits;
-	T exclusive_parked				: exclusive_bits;
-	T upgrading_to_exclusive_parked : 1;
-	// Waiter counters
-};
-template <typename T, typename Data, int shared_bits, int upgradeable_bits, int exclusive_bits>
-struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, true, false> {
+struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, false> {
 	// Parked counters
 	T shared_parked					: shared_bits;
 	T upgradeable_parked			: upgradeable_bits;
 	T exclusive_parked				: exclusive_bits;
 	T upgrading_to_exclusive_parked : 1;
-	// Waiter counters
 };
 template <typename T, typename Data, int shared_bits, int upgradeable_bits, int exclusive_bits>
-struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, false, true> {
-	// Parked counters
-	T upgradeable_parked			: upgradeable_bits;
-	T exclusive_parked				: exclusive_bits;
-	T upgrading_to_exclusive_parked : 1;
-	// Waiter counters
-	T upgradeable_waiters			: upgradeable_bits;
-	T exclusive_waiters				: exclusive_bits;
-};
-template <typename T, typename Data, int shared_bits, int upgradeable_bits, int exclusive_bits>
-struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, true,true> {
+struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclusive_bits, true> {
 	// Parked counters
 	T shared_parked					: shared_bits;
 	T upgradeable_parked			: upgradeable_bits;
@@ -220,10 +206,22 @@ struct waiters_descriptor_storage<T, Data, shared_bits, upgradeable_bits, exclus
 	T exclusive_waiters				: exclusive_bits;
 };
 
-template <typename T, int shared_bits, int upgradeable_bits, int exclusive_bits, bool count_non_shared_parked, bool count_waiters>
+// Calculated storage size for waiters descriptor
+template <int shared_bits, int upgradeable_bits, int exclusive_bits, bool count_waiters>
+static constexpr auto waiters_descriptor_storage_size_v = sizeof(waiters_descriptor_storage<
+	int, int,
+	shared_bits, upgradeable_bits, exclusive_bits, 
+	count_waiters
+>);
+
+template <typename T, int shared_bits, int upgradeable_bits, int exclusive_bits, bool count_waiters>
 class waiters_descriptor {
 	using counter_t = std::make_unsigned_t<T>;
-	using storage_t = waiters_descriptor_storage<counter_t, T, shared_bits, upgradeable_bits, exclusive_bits, count_non_shared_parked, count_waiters>;
+	using storage_t = waiters_descriptor_storage<
+		counter_t, T, 
+		shared_bits, upgradeable_bits, exclusive_bits, 
+		count_waiters
+	>;
 
 private:
 	storage_t storage;
@@ -242,17 +240,11 @@ public:
 		case operation::lock_shared:
 			return storage.shared_parked;
 		case operation::lock_upgradeable:
-			if constexpr (count_non_shared_parked)
-				return storage.upgradeable_parked;
-			break;
+			return storage.upgradeable_parked;
 		case operation::lock_exclusive:
-			if constexpr (count_non_shared_parked)
-				return storage.exclusive_parked;
-			break;
+			return storage.exclusive_parked;
 		case operation::upgrade:
-			if constexpr (count_non_shared_parked)
-				return storage.upgrading_to_exclusive_parked;
-			break;
+			return storage.upgrading_to_exclusive_parked;
 		}
 		
 		return static_cast<counter_t>(0);
@@ -290,18 +282,14 @@ public:
 			storage.shared_parked += count;
 			break;
 		case operation::lock_upgradeable:
-			if constexpr (count_non_shared_parked)
-				storage.upgradeable_parked += count;
+			storage.upgradeable_parked += count;
 			break;
 		case operation::lock_exclusive:
-			if constexpr (count_non_shared_parked)
-				storage.exclusive_parked += count;
+			storage.exclusive_parked += count;
 			break;
 		case operation::upgrade:
-			if constexpr (count_non_shared_parked)
-				storage.upgrading_to_exclusive_parked += count;
+			storage.upgrading_to_exclusive_parked += count;
 			break;
-		default:{}
 		}
 	}
 	template <operation op>

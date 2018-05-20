@@ -6,34 +6,105 @@
 #include "shared_futex/shared_futex.hpp"
 
 template <typename F>
-void test_futex(F&& f) noexcept {
+void compile_futex(F&& f) noexcept {
 	using namespace ste;
 	using namespace shared_futex_policies;
 	
 	{
-		auto l = make_exclusive_lock<exponential_backoff_policy>(f);
+		// Lock exclusive
+		auto l = make_exclusive_lock<>(f);
 	}
 	{
-		auto l = make_shared_lock<exponential_backoff_policy>(f);
+		// Lock shared
+		auto l = make_shared_lock<>(f);
 	}
 	{
-		auto l = make_upgradeable_lock<exponential_backoff_policy>(f);
-		auto up = upgrade_lock<exponential_backoff_policy>(std::move(l));
+		// Lock upgradeable
+		{
+			auto l = make_upgradeable_lock<>(f);
+			// Upgrade
+			auto up = upgrade_lock<>(std::move(l));
+		}
+		{
+			auto l = make_upgradeable_lock<>(f);
+			// Upgrade with timeout
+			auto up1 = try_upgrade_lock_until<>(std::move(l), std::chrono::steady_clock::now() + std::chrono::nanoseconds(1));
+		}
+		{
+			auto l = make_upgradeable_lock<>(f);
+			// Upgrade with timeout
+			auto up2 = try_upgrade_lock_for<>(std::move(l), std::chrono::nanoseconds(1));
+		}
 	}
 	
 	{
-		auto l = make_exclusive_lock<relaxed_backoff_policy>(f);
+		// Lock with custom policy
+		auto l0 = make_shared_lock<relaxed_backoff_policy>(f);
+		auto l1 = make_shared_lock<spinlock_backoff_policy>(f);
 	}
+	
 	{
-		auto l = make_exclusive_lock<spinlock_backoff_policy>(f);
+		// Defer lock
+		auto l0 = make_shared_lock<>(f, std::defer_lock);
+		auto l1 = make_shared_lock<>(f, std::defer_lock);
+		std::lock(l0, l1);
+	}
+
+	{
+		// Manual locking
+		auto l = make_exclusive_lock<>(f, std::defer_lock);
+		if (l.try_lock()) {
+			l.unlock();
+		}
+		if (l.try_lock_for(std::chrono::milliseconds(1))) {
+			l.unlock();
+		}
+		if (l.try_lock_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(1))) {
+			l.unlock();
+		}
+		l.lock();
+		l.unlock();
+	}
+
+	{
+		// Drop lock
+		auto l0 = make_exclusive_lock<>(f);
+		auto lock_object = std::move(l0).drop();
+
+		// And adopt lock
+		auto l1 = make_exclusive_lock<>(f, std::move(lock_object));
+
+		// Dropping and not adopting the lock will trigger an assert
+	}
+
+	{
+		// Swap
+		auto l0 = make_exclusive_lock<>(f);
+		auto l1 = make_exclusive_lock<>(f, std::defer_lock);
+
+		std::swap(l0, l1);
+		assert(!l0.owns_lock() && l1.owns_lock());
+
+		l0.swap(l1);
+		assert(l0.owns_lock() && !l1.owns_lock());
+
+		// Move
+		l1 = std::move(l0);
+		assert(!l0.owns_lock() && l1.owns_lock());
+		
+		auto l2 = make_exclusive_lock<>(f, std::defer_lock);
+		l1 = std::move(l2);	// Will unlock
+		assert(!l0.owns_lock() && !l1.owns_lock() && !l2.owns_lock());
+
+		make_exclusive_lock<>(f);
 	}
 }
 
-void test() noexcept {}
+void compile() noexcept {}
 template <typename F, typename... Fs>
-void test(F&& f, Fs&&... fs) noexcept {
-	test_futex(std::forward<F>(f));
-	test(std::forward<Fs>(fs)...);
+void compile(F&& f, Fs&&... fs) noexcept {
+	compile_futex(std::forward<F>(f));
+	compile(std::forward<Fs>(fs)...);
 }
 
 int main() {
@@ -45,7 +116,8 @@ int main() {
 	ste::shared_futex_tsx_hle fhle;
 	ste::shared_futex_tsx_rtm frtm;
 
-	test(f, fmicro, fmicro_hle, fpico, fconcurrent, fhle, frtm);
+	// Test compilation
+	compile(f, fmicro, fmicro_hle, fpico, fconcurrent, fhle, frtm);
 
 	return 0;
 }

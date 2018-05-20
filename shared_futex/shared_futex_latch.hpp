@@ -81,7 +81,7 @@ private:
 		counter,
 	};
 	enum class lock_status : std::uint8_t {
-		not_acquired,
+		not_acquired = 0,
 		acquired,
 		transaction,
 	};
@@ -107,7 +107,6 @@ private:
 	static constexpr bool parking_allowed = parking_policy != shared_futex_parking_policy::none;
 	// If we neither allow parking nor count waiter we can dispense with the waiters counter.
 	static constexpr bool has_waiters_counter = count_waiters || parking_allowed;
-	static constexpr bool count_shared_parked = true;
 
 	using slot_type = std::uint32_t;
 	static constexpr std::size_t slot_count = use_slots ? 8 : 1;
@@ -141,17 +140,30 @@ public:
 		explicit operator bool() const noexcept { return mode != lock_status::not_acquired; }
 	};
 
+	// Latch data type
 	using latch_data_type = std::make_signed_t<typename futex_policy::latch_data_type>;
-	using waiters_counter_type = std::int64_t;
-	using parking_key_t = std::uint64_t;
+
+	// Choose waiter/parked counters data type
+	static constexpr auto waiters_descriptor_size = waiters_descriptor_storage_size_v<
+		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
+		count_waiters
+	>;
+	using waiters_counter_type = std::conditional_t<
+		waiters_descriptor_size <= 1, std::int8_t,  std::conditional_t<
+		waiters_descriptor_size <= 2, std::int16_t, std::conditional_t<
+		waiters_descriptor_size <= 4, std::int32_t, std::int64_t
+	>>>;
 	
 	using latch_descriptor = latch_descriptor<latch_data_type, parking_policy>;
 	using waiters_descriptor = waiters_descriptor<
 		waiters_counter_type,
 		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
-		count_shared_parked, count_waiters
+		count_waiters
 	>;
-	using parking_lot_t = shared_futex_parking<parking_policy>;
+	
+	using parking_key_t = std::uint64_t;
+	using parking_lot_t = shared_futex_parking<parking_key_t, parking_policy>;
+	using park_return_t = typename parking_lot_t::park_return_t;
 
 private:
 	using latch_atomic_t = atomic_tsx<latch_data_type>;
@@ -528,15 +540,11 @@ private:
 	}
 
 public:
-	shared_futex_default_latch() = default;
+	constexpr shared_futex_default_latch() noexcept = default;
 	shared_futex_default_latch(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch(const shared_futex_default_latch&) = delete;
 	shared_futex_default_latch &operator=(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch &operator=(const shared_futex_default_latch&) = delete;
-	~shared_futex_default_latch() noexcept {
-		// Latch dtored while lock is held or pending?
-		assert(data.latch[primary_slot]->load() == latch_data_type{});
-	}
 
 	latch_descriptor load(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (collect_statistics) {
@@ -640,37 +648,37 @@ public:
 	/*
 	 *	@brief	Attempts unparking of threads of a specified op using a given unpark tactic.
 	 *			Return value might be inaccurate for unpark_all tactic, depending on parking policy used.
+	 *			unpark_predicate is ignored for shared lockers when parking policy is shared_local.
+	 *			
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
-	parking_lot_wait_state park(ParkPredicate &&park_predicate,
-								OnPark &&on_park,
-								const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	template <operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	park_return_t park(ParkPredicate &&park_predicate,
+					   OnPark &&on_park,
+					   PostPark &&post_park,
+					   const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
-
-		parking_lot_wait_state result = parking_lot_wait_state::signaled;
 
 		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
 			// Park shared in local slot
-			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-													 std::forward<OnPark>(on_park),
-													 until);
+			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
+												   std::forward<OnPark>(on_park),
+												   std::forward<PostPark>(post_park),
+												   until);
 		}
 		else if constexpr (parking_allowed) {
 			// Wait
 			auto key = parking_lot_parking_key<op>();
-			result = data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-													 std::forward<OnPark>(on_park),
-													 std::move(key),
-													 until);
+			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
+												   std::forward<OnPark>(on_park),
+												   std::forward<PostPark>(post_park),
+												   std::move(key),
+												   until);
 		}
 
-		// Prefetch after park, as soon as possible.
-		prefetch<op>();
-
-		return result;
+		return parking_lot_wait_state::signaled;
 	}
 	
 	/*
@@ -724,6 +732,42 @@ public:
 	}
 	// Registers parked thread
 	template <operation op>
+	void register_park(memory_order order = memory_order::release) noexcept {
+		if constexpr (debug_shared_futex)
+			assert(parking_allowed && "Parking not allowed");
+		
+		if constexpr (should_count_parked<op>()) {
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
+
+			waiters_descriptor dp = {};
+			dp.template inc_parked<op>(1);
+			const auto bits = +static_cast<waiters_counter_type>(dp);
+
+			data.latch.waiters.fetch_add(bits, order);
+		}
+	}
+	// Unregisters parked thread(s)
+	template <operation op>
+	void register_unpark(std::size_t count = 1, memory_order order = memory_order::release) noexcept {
+		if constexpr (debug_shared_futex) {
+			assert(parking_allowed && "Parking not allowed");
+			assert(count && "Count must be positive");
+		}
+		
+		if constexpr (should_count_parked<op>()) {
+			if constexpr (collect_statistics)
+				++debug_statistics.lock_rmw_instructions;
+
+			waiters_descriptor d = {};
+			d.template inc_parked<op>(count);
+			const auto bits = -static_cast<waiters_counter_type>(d);
+			
+			data.latch.waiters.fetch_add(bits);
+		}
+	}
+	// Unregisters as waiter and registers as parked thread
+	template <operation op>
 	void register_unwait_and_park(memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(parking_allowed && "Parking not allowed");
@@ -748,7 +792,7 @@ public:
 			data.latch.waiters.fetch_add(bits, order);
 		}
 	}
-	// Unregister parked and register as waiter
+	// Unregisters as parked and registers as waiter
 	template <operation op>
 	void register_unpark_and_wait(memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
@@ -771,25 +815,6 @@ public:
 				bits += static_cast<waiters_counter_type>(dw);
 			}
 
-			data.latch.waiters.fetch_add(bits);
-		}
-	}
-	// Unregister parked thread(s)
-	template <operation op>
-	void register_unpark(std::size_t count = 1, memory_order order = memory_order::release) noexcept {
-		if constexpr (debug_shared_futex) {
-			assert(parking_allowed && "Parking not allowed");
-			assert(count && "Count must be positive");
-		}
-		
-		if constexpr (should_count_parked<op>()) {
-			if constexpr (collect_statistics)
-				++debug_statistics.lock_rmw_instructions;
-
-			waiters_descriptor d = {};
-			d.template inc_parked<op>(count);
-			const auto bits = -static_cast<waiters_counter_type>(d);
-			
 			data.latch.waiters.fetch_add(bits);
 		}
 	}

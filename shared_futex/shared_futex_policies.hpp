@@ -47,11 +47,11 @@ struct shared_futex_default_policy {
 	using latch_data_type = std::uint32_t;
 
 	// Bit depth for shared waiters counter
-	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t shared_bits = 12;
 	// Bit depth for upgradeable waiters counter
-	static constexpr std::size_t upgradeable_bits = 10;
+	static constexpr std::size_t upgradeable_bits = 12;
 	// Bit depth for exclusive waiters counter
-	static constexpr std::size_t exclusive_bits = 10;
+	static constexpr std::size_t exclusive_bits = 12;
 
 	/*
 	 *	Futex behaviour policies
@@ -88,7 +88,7 @@ struct shared_futex_micro_policy {
 	static constexpr std::size_t alignment = 1;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t shared_bits = 8;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
@@ -104,7 +104,7 @@ struct shared_futex_micro_tsx_hle_policy {
 	static constexpr std::size_t alignment = 1;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 10;
+	static constexpr std::size_t shared_bits = 8;
 	static constexpr std::size_t upgradeable_bits = 1;
 	static constexpr std::size_t exclusive_bits = 1;
 
@@ -120,9 +120,9 @@ struct shared_futex_tsx_hle_policy {
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 10;
-	static constexpr std::size_t upgradeable_bits = 10;
-	static constexpr std::size_t exclusive_bits = 10;
+	static constexpr std::size_t shared_bits = 12;
+	static constexpr std::size_t upgradeable_bits = 12;
+	static constexpr std::size_t exclusive_bits = 12;
 
 	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
 	static constexpr bool count_waiters = true;
@@ -136,9 +136,9 @@ struct shared_futex_tsx_rtm_policy {
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 10;
-	static constexpr std::size_t upgradeable_bits = 10;
-	static constexpr std::size_t exclusive_bits = 10;
+	static constexpr std::size_t shared_bits = 12;
+	static constexpr std::size_t upgradeable_bits = 12;
+	static constexpr std::size_t exclusive_bits = 12;
 
 	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::parking_lot;
 	static constexpr bool count_waiters = true;
@@ -152,9 +152,9 @@ struct shared_futex_multi_slot_policy {
 	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
-	static constexpr std::size_t shared_bits = 10;
-	static constexpr std::size_t upgradeable_bits = 10;
-	static constexpr std::size_t exclusive_bits = 10;
+	static constexpr std::size_t shared_bits = 12;
+	static constexpr std::size_t upgradeable_bits = 12;
+	static constexpr std::size_t exclusive_bits = 12;
 
 	static constexpr shared_futex_detail::shared_futex_parking_policy parking_policy = shared_futex_detail::shared_futex_parking_policy::shared_local;
 	static constexpr bool count_waiters = true;

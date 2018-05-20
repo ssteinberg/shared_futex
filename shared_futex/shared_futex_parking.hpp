@@ -11,27 +11,23 @@
 
 namespace ste::shared_futex_detail {
 
-template <shared_futex_parking_policy policy>
-class shared_futex_parking {};
-
-
-// Empty parital 
-template <>
-class shared_futex_parking<shared_futex_parking_policy::none> {
+template <typename ParkSlot, shared_futex_parking_policy policy>
+class shared_futex_parking {
 public:
-	template <operation>
-	static constexpr bool provides_accurate_unpark_count() noexcept { return false; }
-	template <operation, typename... Args>
-	static void park_until(Args&&...) noexcept {}
-	template <operation, typename... Args>
-	static void unpark(Args&&...) noexcept {}
+	using park_return_t = parking_lot_wait_state;
+	
+	template <operation op>
+	static constexpr bool provides_accurate_unpark_count() noexcept { return true; }
 };
 
-
 // Partial specialization for 'parking lot' policy
-template <>
-class shared_futex_parking<shared_futex_parking_policy::parking_lot> {
-	using parking_lot_t = parking_lot<>;
+template <typename ParkSlot>
+class shared_futex_parking<ParkSlot, shared_futex_parking_policy::parking_lot> {
+public:
+	using park_return_t = parking_lot_wait_state;
+
+private:
+	using parking_lot_t = parking_lot<ParkSlot>;
 	parking_lot_t parking;
 
 public:
@@ -46,14 +42,16 @@ public:
 	 *	@brief	If park_predicate returns true, parks the calling thread in the specified slot until the timeout has expired 
 	 *			or the thread was unparked. 
 	*/
-	template <operation op, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration>
-	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
-									  OnPark &&on_park,
-									  ParkSlot &&park_slot,
-									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	template <operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	park_return_t park_until(ParkPredicate &&park_predicate,
+							 OnPark &&on_park,
+							 PostPark &&post_park,
+							 ParkSlot &&park_slot,
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		return parking.park_until(std::forward<ParkPredicate>(park_predicate),
 								  std::forward<OnPark>(on_park),
-								  std::forward<ParkSlot>(park_slot),
+								  std::forward<PostPark>(post_park),
+								  std::move(park_slot),
 								  until).first;
 	}
 	
@@ -61,41 +59,43 @@ public:
 	 *	@brief	Unparks threads of a specified op.
 	 *	@return	Count of threads successfully unparked
 	 */
-	template <unpark_tactic tactic, operation op, typename ParkSlot>
-	std::size_t unpark(const ParkSlot &park_slot) noexcept {
-		// Choose function for given unpark tactic
-		const auto unparking_function = tactic == unpark_tactic::all ?
-			&parking_lot_t::unpark_all<ParkSlot> :
-			&parking_lot_t::unpark_one<ParkSlot>;
-
-		// Attempt unpark
-		return std::invoke(unparking_function, parking, park_slot);
+	template <unpark_tactic tactic, operation op>
+	std::size_t unpark(ParkSlot &&park_slot) noexcept {
+        const auto unparking_function = tactic == unpark_tactic::all ? 
+            &parking_lot_t::template unpark_all<> : 
+            &parking_lot_t::template unpark_one<>;
+		
+        return std::invoke(unparking_function, parking, park_slot); 
 	}
 };
 
 
 // Partial specialization for 'shared_local' policy
-template <>
-class shared_futex_parking<shared_futex_parking_policy::shared_local> {
+template <typename ParkSlot>
+class shared_futex_parking<ParkSlot, shared_futex_parking_policy::shared_local> {
+public:
+	using park_return_t = parking_lot_wait_state;
+
+private:
 	// Local slot for shared
 	using mutex_t = utils::spinner<>;
 	std::condition_variable_any shared_cond_var;
 	mutex_t shared_cond_var_lock;
 
 	// Parking lot for non-shared
-	using parking_lot_t = parking_lot<>;
+	using parking_lot_t = parking_lot<ParkSlot>;
 	parking_lot_t parking;
 
 private:
 	template <typename ParkPredicate, typename OnPark, typename CondVar, typename Mutex, typename Clock, typename Duration>
-	static parking_lot_wait_state wait(ParkPredicate &&park_predicate,
-									   OnPark &&on_park,
-									   CondVar &cond_var,
-									   Mutex &m,
-									   const std::chrono::time_point<Clock, Duration> &until) noexcept {
-		on_park();
-
+	static park_return_t wait(ParkPredicate &&park_predicate,
+							  OnPark &&on_park,
+							  CondVar &cond_var,
+							  Mutex &m,
+							  const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		std::unique_lock<Mutex> ul(m);
+
+		on_park();
 
 		// Check predicate under lock
 		if (park_predicate())
@@ -120,26 +120,25 @@ public:
 	 */
 	template <operation op>
 	static constexpr bool provides_accurate_unpark_count() noexcept {
-		if constexpr (op == operation::lock_shared)
-			return false;
-		else
-			return true;
+		return op != operation::lock_shared;
 	}
 
 	/*
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
 	template <
-		operation op, typename ParkPredicate, typename OnPark, typename ParkSlot, typename Clock, typename Duration,
+		operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration,
 		typename = std::enable_if_t<op != operation::lock_shared>
 	>
-	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
-									  OnPark &&on_park,
-									  ParkSlot &&park_slot,
-									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
+	park_return_t park_until(ParkPredicate &&park_predicate,
+							 OnPark &&on_park,
+							 PostPark &&post_park,
+							 ParkSlot &&park_slot,
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		return parking.park_until(std::forward<ParkPredicate>(park_predicate),
 								  std::forward<OnPark>(on_park),
-								  std::forward<ParkSlot>(park_slot),
+								  std::forward<PostPark>(post_park),
+								  std::move(park_slot),
 								  until).first;
 	}
 
@@ -147,17 +146,21 @@ public:
 	 *	@brief	Parks the calling thread in the specified slot until the timeout has expired or the thread was unparked. 
 	*/
 	template <
-		operation op, typename ParkPredicate, typename OnPark, typename Clock, typename Duration,
+		operation op, typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration,
 		typename = std::enable_if_t<op == operation::lock_shared>
 	>
-	parking_lot_wait_state park_until(ParkPredicate &&park_predicate,
-									  OnPark &&on_park,
-									  const std::chrono::time_point<Clock, Duration> &until) noexcept {
-		return wait(std::forward<ParkPredicate>(park_predicate),
-					std::forward<OnPark>(on_park),
-					shared_cond_var,
-					shared_cond_var_lock,
-					until);
+	park_return_t park_until(ParkPredicate &&park_predicate,
+							 OnPark &&on_park,
+							 PostPark &&post_park,
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
+		auto result = wait(std::forward<ParkPredicate>(park_predicate),
+						   std::forward<OnPark>(on_park),
+						   shared_cond_var,
+						   shared_cond_var_lock,
+						   until);
+		post_park();
+
+		return result;
 	}
 	
 	/*
@@ -192,17 +195,16 @@ public:
 	 *	@return	Count of threads successfully unparked
 	 */
 	template <
-		unpark_tactic tactic, operation op, typename ParkSlot,
+		unpark_tactic tactic, operation op,
 		typename = std::enable_if_t<op != operation::lock_shared>
 	>
-	std::size_t unpark(const ParkSlot &park_slot) noexcept {
-		// Choose function for given unpark tactic
-		const auto unparking_function = tactic == unpark_tactic::all ?
-			&parking_lot_t::unpark_all<ParkSlot> :
-			&parking_lot_t::unpark_one<ParkSlot>;
-
-		// Attempt unpark
-		return std::invoke(unparking_function, parking, park_slot);
+	std::size_t unpark(ParkSlot &&park_slot) noexcept {
+        // Choose function for given unpark tactic 
+        const auto unparking_function = tactic == unpark_tactic::all ? 
+            &parking_lot_t::template unpark_all<> : 
+            &parking_lot_t::template unpark_one<>;
+		
+        return std::invoke(unparking_function, parking, park_slot); 
 	}
 };
 
