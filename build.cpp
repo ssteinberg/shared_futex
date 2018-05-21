@@ -12,28 +12,28 @@ void compile_futex(F&& f) noexcept {
 	
 	{
 		// Lock exclusive
-		auto l = make_exclusive_lock<>(f);
+		auto l = make_exclusive_lock(f);
 	}
 	{
 		// Lock shared
-		auto l = make_shared_lock<>(f);
+		auto l = make_shared_lock(f);
 	}
 	{
 		// Lock upgradeable
 		{
-			auto l = make_upgradeable_lock<>(f);
+			auto l = make_upgradeable_lock(f);
 			// Upgrade
-			auto up = upgrade_lock<>(std::move(l));
+			auto up = upgrade_lock(std::move(l));
 		}
 		{
-			auto l = make_upgradeable_lock<>(f);
+			auto l = make_upgradeable_lock(f);
 			// Upgrade with timeout
-			auto up1 = try_upgrade_lock_until<>(std::move(l), std::chrono::steady_clock::now() + std::chrono::nanoseconds(1));
+			auto up = try_upgrade_lock_until(std::move(l), std::chrono::steady_clock::now() + std::chrono::nanoseconds(1));
 		}
 		{
-			auto l = make_upgradeable_lock<>(f);
+			auto l = make_upgradeable_lock(f);
 			// Upgrade with timeout
-			auto up2 = try_upgrade_lock_for<>(std::move(l), std::chrono::nanoseconds(1));
+			auto up = try_upgrade_lock_for(std::move(l), std::chrono::nanoseconds(1));
 		}
 	}
 	
@@ -45,14 +45,32 @@ void compile_futex(F&& f) noexcept {
 	
 	{
 		// Defer lock
-		auto l0 = make_shared_lock<>(f, std::defer_lock);
-		auto l1 = make_shared_lock<>(f, std::defer_lock);
+		auto l0 = make_shared_lock(f, std::defer_lock);
+		auto l1 = make_shared_lock(f, std::defer_lock);
+		// Lock multiple locks with deadlock avoidence
 		std::lock(l0, l1);
 	}
 
 	{
+		// Lock with timeout
+		auto l0 = make_shared_lock(f, std::chrono::high_resolution_clock::now() + std::chrono::nanoseconds(100));	// Time point
+		if (l0) {
+			// Got lock
+		}
+		auto l1 = make_shared_lock(f, std::chrono::nanoseconds(100));	// Duration
+	}
+
+	{
+		// Non blocking lock attempt
+		auto l = make_exclusive_lock(f, std::try_to_lock);
+		if (l) {
+			// Got lock
+		}
+	}
+
+	{
 		// Manual locking
-		auto l = make_exclusive_lock<>(f, std::defer_lock);
+		auto l = make_exclusive_lock(f, std::defer_lock);
 		if (l.try_lock()) {
 			l.unlock();
 		}
@@ -68,19 +86,20 @@ void compile_futex(F&& f) noexcept {
 
 	{
 		// Drop lock
-		auto l0 = make_exclusive_lock<>(f);
-		auto lock_object = std::move(l0).drop();
+		auto l0 = make_exclusive_lock(f);
+		auto&& lock_object = std::move(l0).drop();
 
 		// And adopt lock
-		auto l1 = make_exclusive_lock<>(f, std::move(lock_object));
+		auto l1 = make_exclusive_lock(f, std::move(lock_object));
+		assert(!l0.owns_lock() && l1.owns_lock());
 
 		// Dropping and not adopting the lock will trigger an assert
 	}
 
 	{
 		// Swap
-		auto l0 = make_exclusive_lock<>(f);
-		auto l1 = make_exclusive_lock<>(f, std::defer_lock);
+		auto l0 = make_exclusive_lock(f);
+		auto l1 = make_exclusive_lock(f, std::defer_lock);
 
 		std::swap(l0, l1);
 		assert(!l0.owns_lock() && l1.owns_lock());
@@ -92,11 +111,8 @@ void compile_futex(F&& f) noexcept {
 		l1 = std::move(l0);
 		assert(!l0.owns_lock() && l1.owns_lock());
 		
-		auto l2 = make_exclusive_lock<>(f, std::defer_lock);
-		l1 = std::move(l2);	// Will unlock
-		assert(!l0.owns_lock() && !l1.owns_lock() && !l2.owns_lock());
-
-		make_exclusive_lock<>(f);
+		l1 = {};	// Will unlock
+		assert(!l0.owns_lock() && !l1.owns_lock());
 	}
 }
 
@@ -113,7 +129,7 @@ int main() {
 	ste::shared_futex_micro_hle fmicro_hle;
 	ste::shared_futex_pico fpico;
 	ste::shared_futex_concurrent fconcurrent;
-	ste::shared_futex_tsx_hle fhle;
+	ste::shared_futex_hle fhle;
 	ste::shared_futex_tsx_rtm frtm;
 
 	// Test compilation

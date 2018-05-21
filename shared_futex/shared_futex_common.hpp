@@ -72,6 +72,7 @@ static constexpr bool collect_statistics = false;
 #endif
 
 
+// Latch operation
 enum class operation : std::uint8_t {
 	lock_shared,
 	lock_upgradeable,
@@ -79,6 +80,7 @@ enum class operation : std::uint8_t {
 	upgrade,
 };
 
+// Backoff iteration type
 enum class backoff_operation : std::uint8_t {
 	spin,
 	yield,
@@ -86,6 +88,7 @@ enum class backoff_operation : std::uint8_t {
 	park,
 };
 
+// Result of a backoff iteration
 enum class backoff_result : std::uint8_t {
 	unparked,
 	park_predicate_triggered,
@@ -94,6 +97,7 @@ enum class backoff_result : std::uint8_t {
 	spin,
 };
 
+// Hint for the backoff protocol
 enum class backoff_aggressiveness : std::uint8_t {
 	aggressive,
 	normal,
@@ -101,11 +105,23 @@ enum class backoff_aggressiveness : std::uint8_t {
 	very_relaxed,
 };
 
+// Acquisition type
 enum class acquisition_primality : std::uint8_t {
 	initial, 
 	waiter,
 };
 
+// Hint given by latch release operation in regards to latch state
+enum class latch_availability_hint : std::uint8_t {
+	// Latch is free
+	free,
+	// Held in exclusive mode
+	exclusive,
+	// Held in shared mode
+	shared
+};
+
+// Unpark operation
 enum class unpark_tactic : std::uint8_t {
 	one,
 	all,

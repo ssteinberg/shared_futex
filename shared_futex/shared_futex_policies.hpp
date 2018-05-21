@@ -170,20 +170,19 @@ struct spinlock_backoff_policy {
 	using backoff_operation = shared_futex_detail::backoff_operation;
 	using backoff_aggressiveness = shared_futex_detail::backoff_aggressiveness;
 
-	static constexpr std::size_t max_spin_count = 10;
-
 	template <shared_futex_detail::operation, typename Clock, typename Duration>
 	static constexpr backoff_operation select_operation(std::size_t iteration, float, backoff_aggressiveness,
 														const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		if ((iteration % 100) == 0 &&
-			until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
+			until != std::chrono::time_point<Clock, Duration>::max() && 
+			Clock::now() >= until)
 			return backoff_operation::timeout;
 		return backoff_operation::spin;
 	}
 	template <shared_futex_detail::operation>
 	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept {
 		const auto rdtsc = __rdtsc();
-		return (rdtsc % 48) + 32;
+		return (rdtsc % 64) + 32;
 	}
 };
 
@@ -211,7 +210,8 @@ struct exponential_backoff_policy {
 			return backoff_operation::spin;
 
 		// Check timeout
-		if (until != std::chrono::time_point<Clock, Duration>::max() && Clock::now() >= until)
+		if (until != std::chrono::time_point<Clock, Duration>::max() && 
+			Clock::now() >= until)
 			return backoff_operation::timeout;
 
 		// Yield
@@ -224,32 +224,29 @@ struct exponential_backoff_policy {
 	template <shared_futex_detail::operation>
 	static std::size_t spin_count(std::size_t iteration, float, backoff_aggressiveness aggressiveness) noexcept {
 		// Calculate spin count
-		const auto x = static_cast<float>(iteration - 1);
-		const auto norm = sqrt_spins_on_last_iteration(aggressiveness) / static_cast<float>(spin_iterations(aggressiveness));
-		const auto sqrt_spins = x * norm;
+		const auto x = spins_on_last_iteration(aggressiveness) * (iteration - 1) / spin_iterations(aggressiveness);
 
 		// Inject some randomness to break cross-thread symmetry
 		const auto symmetry_breaker = spin_symmetry_breaker(aggressiveness);
 
-		return spin_base_count(aggressiveness) + static_cast<std::size_t>(sqrt_spins*sqrt_spins) + symmetry_breaker;
+		return spin_base_count(aggressiveness) + symmetry_breaker + x;
 	}
 
 private:
-	static constexpr float sqrt_spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
-		return 12.f;		// ~150 pause instructions on last iteration, on the scale of ~500-600 nanoseconds.
+	static constexpr std::size_t spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
+		return 64ull;		// +64 pause instructions on last iteration, on the scale of ~200 nanoseconds.
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 256 :
-			aggressiveness == backoff_aggressiveness::normal ? 128 :
-			aggressiveness == backoff_aggressiveness::relaxed ? 32 :
-			0;
+			aggressiveness == backoff_aggressiveness::aggressive ? 64 :
+			aggressiveness == backoff_aggressiveness::normal ? 32 :
+			16;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 24ull :
+			aggressiveness == backoff_aggressiveness::aggressive ? 32ull :
 			aggressiveness == backoff_aggressiveness::normal ? 48ull :
-			32ull;
+			64ull;
 	}
 	static std::size_t spin_symmetry_breaker(backoff_aggressiveness aggressiveness) noexcept {
 		// Will return a random count between 0 and max
@@ -302,14 +299,14 @@ struct shared_futex_protocol_policy {
 	// The desired count of waiters using an aggressive backoff protocol, on average.
 	static constexpr auto desired_aggressive_waiters_count = 1;
 	// The desired count of waiters using a normal backoff protocol, on average.
-	static constexpr auto desired_normal_waiters_count = 3;
+	static constexpr auto desired_normal_waiters_count = 5;
 	// The desired count of waiters using a relaxed backoff protocol, on average.
 	static constexpr auto desired_relaxed_waiters_count = 0;
 
 	// Each count of those iterations we re-choose the backoff protocol
 	static constexpr auto refresh_backoff_protocol_every_iterations = 0;
 	// If set to true, iteration counter will be reset after an unpark, causing the waiter to restart its backoff policy.
-	static constexpr bool reset_iterations_count_after_unpark = false;
+	static constexpr bool reset_iterations_count_after_unpark = true;
 
 	// When looking for candidates to unpark, we unpark a waiter if count of active waiters, that might block said waiter, is lower than 
 	// this threshold.

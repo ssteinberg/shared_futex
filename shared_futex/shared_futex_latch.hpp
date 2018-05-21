@@ -408,7 +408,7 @@ private:
 
 		// We have acquired primary slot, so there're possibly only shared lockers to contend with on non-primary slots.
 		// Kill concurrency by setting active slot count to 1.
-		const auto active_slots = data.latch.active_slots.exchange(1, order);
+		const auto active_slots = data.latch.active_slots.exchange(1, memory_order::acq_rel);
 		assert(active_slots <= latch_storage_t::count);
 
 		// Check if the rest of the slots are valid
@@ -429,6 +429,8 @@ private:
 
 		// Failure. Revert primary slot.
 		if constexpr (op != operation::upgrade) {
+			// Write back old active slot counter
+			data.latch.active_slots.exchange(active_slots, memory_order::release);
 			release_internal_slot<op>(primary_slot, primary_status, order);
 		}
 		return {};
@@ -478,7 +480,7 @@ private:
 	}
 	// Release a slot
 	template <operation op>
-	void release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
+	latch_availability_hint release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<op>();
 		const auto store_order = memory_order_store(order);
 		const auto load_order = memory_order_load(order);
@@ -493,8 +495,14 @@ private:
 				++debug_statistics.lock_rmw_instructions;
 
 			const latch_data_type new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
-			if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked())
+			if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked()) {
+				// Counter decreased to 0, release latch.
 				data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
+				return latch_availability_hint::free;
+			}
+
+			// Counter not 0, we are still holding latch.
+			return latch_availability_hint::shared;
 		}
 		else if constexpr (method == latch_acquisition_method::cxhg) {
 			// Compare-exchange loop
@@ -509,26 +517,32 @@ private:
 				if (desired_latch == latch_descriptor::make_exclusive_locked())
 					desired_latch = {};
 			} while (!data.latch[slot]->compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order));
+
+			// Return hint based on the final latch value cxhg-ed in.
+			if (desired_latch == latch_descriptor{})
+				return latch_availability_hint::free;
+			return latch_availability_hint::shared;
 		}
 		else /*(method == latch_acquisition_method::set_flag)*/ {
 			if constexpr (tsx_hle_exclusive) {
 				// xrelease
 				if (mode == lock_status::transaction) {
 					data.latch[slot]->bit_test_and_reset(static_cast<latch_data_type>(desired_latch), memory_order::xrelease);
-					return;
+					return latch_availability_hint::free;
 				}
 			}
 			// Atomic store
 			data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
+			return latch_availability_hint::free;
 		}
 	}
 	// Releases the latch
 	template <operation op>
-	void release_internal(slot_type used_slot, lock_status mode, memory_order order) noexcept {
+	latch_availability_hint release_internal(slot_type used_slot, lock_status mode, memory_order order) noexcept {
 		// If we can release the latch in transactional mode, we are done.
 		if constexpr (tsx_rtm) {
 			if (release_internal_transactional(mode))
-				return;
+				return latch_availability_hint::free;
 		}
 
 		auto slot = primary_slot;
@@ -623,13 +637,15 @@ public:
 	 *	@param	lock	lock, acquired via a call to acquire() or upgrade(), to consume.
 	 */
 	template <operation op>
-	void release(latch_lock &&lock, memory_order order = memory_order::release) noexcept {
+	latch_availability_hint release(latch_lock &&lock, memory_order order = memory_order::release) noexcept {
 		if constexpr (debug_shared_futex)
 			assert(lock);
 		
 		// Release and consume the lock
-		release_internal<op>(lock.slot_used, lock.mode, order);
+		const auto hint = release_internal<op>(lock.slot_used, lock.mode, order);
 		std::move(lock).reset();
+
+		return hint;
 	}
 
 	/*
