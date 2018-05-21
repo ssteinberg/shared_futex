@@ -30,7 +30,7 @@ using shared_futex_concurrent = shared_futex_detail::shared_futex_t<
  *	@brief	Shared, upgradeable futex. 
  *			Employs hardware lock elision if supported by the system.
  */
-using shared_futex_tsx_hle = shared_futex_detail::shared_futex_t<
+using shared_futex_hle = shared_futex_detail::shared_futex_t<
 	shared_futex_policies::shared_futex_tsx_hle_policy,
 	shared_futex_detail::shared_futex_default_latch
 >;
