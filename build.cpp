@@ -129,7 +129,7 @@ int main() {
 	ste::shared_futex_micro_hle fmicro_hle;
 	ste::shared_futex_pico fpico;
 	ste::shared_futex_concurrent fconcurrent;
-	ste::shared_futex_tsx_hle fhle;
+	ste::shared_futex_hle fhle;
 	ste::shared_futex_tsx_rtm frtm;
 
 	// Test compilation

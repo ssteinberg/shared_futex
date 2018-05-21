@@ -408,7 +408,7 @@ private:
 
 		// We have acquired primary slot, so there're possibly only shared lockers to contend with on non-primary slots.
 		// Kill concurrency by setting active slot count to 1.
-		const auto active_slots = data.latch.active_slots.exchange(1, order);
+		const auto active_slots = data.latch.active_slots.exchange(1, memory_order::acq_rel);
 		assert(active_slots <= latch_storage_t::count);
 
 		// Check if the rest of the slots are valid
@@ -429,6 +429,8 @@ private:
 
 		// Failure. Revert primary slot.
 		if constexpr (op != operation::upgrade) {
+			// Write back old active slot counter
+			data.latch.active_slots.exchange(active_slots, memory_order::release);
 			release_internal_slot<op>(primary_slot, primary_status, order);
 		}
 		return {};
