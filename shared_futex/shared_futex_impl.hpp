@@ -396,9 +396,14 @@ protected:
 	}
 	
 	// Handles unparking of shared and upgradeable parked waiters.
-	static std::size_t unpark_shared_if_needed(Latch &l, const latch_descriptor &latch_value, const waiters_descriptor &waiters_value) noexcept {
+	static std::size_t unpark_shared_if_needed(Latch &l, const latch_availability_hint hint, const waiters_descriptor &waiters_value) noexcept {
 		// Check if shared can even be unparked
-		if (!can_acquire_lock<acquisition_primality::waiter, operation::lock_shared>(latch_value))
+		if constexpr (op == operation::lock_shared) {
+			// No need to unpark if latch is in shared mode (there can not be any shared waiters)
+			if (hint == latch_availability_hint::shared)
+				return 0;
+		}
+		if (hint == latch_availability_hint::exclusive)
 			return 0;
 
 		std::size_t unparked = 0;
@@ -425,12 +430,12 @@ protected:
 	 *			Upgrade-to-exclusive first as they block all other lockers, exclusive are secondary and shared and upgradeable waiters are last.
 	 */
 	template <operation unparker_op = op>
-	static std::size_t unpark_if_needed(Latch &l, const latch_descriptor &latch_value) noexcept {
-		const auto waiters_value = l.load_waiters_counters(memory_order::relaxed);
+	static std::size_t unpark_if_needed(Latch &l, const latch_availability_hint hint) noexcept {
+		const auto waiters_value = l.load_waiters_counters(memory_order::acquire);
 
 		// Try to unpark an upgrade-to-exclusive waiter (there can only be one at most)
 		if constexpr (unparker_op == operation::lock_shared) {
-			if (can_acquire_lock<acquisition_primality::waiter, operation::upgrade>(latch_value)) {
+			if (hint != latch_availability_hint::exclusive) {
 				const auto upgrading_to_exclusive_parked = waiters_value.template parked<operation::upgrade>();
 
 				if (upgrading_to_exclusive_parked > 0) {
@@ -450,7 +455,7 @@ protected:
 		}
 		
 		// ... an exclusive waiter
-		if (can_acquire_lock<acquisition_primality::waiter, operation::lock_exclusive>(latch_value)) {
+		if (hint == latch_availability_hint::free) {
 			const auto exclusive_parked = waiters_value.template parked<operation::lock_exclusive>();
 			if (exclusive_parked > 0) {
 				const auto unparked = unpark<unpark_tactic::one, operation::lock_exclusive>(l);
@@ -461,7 +466,7 @@ protected:
 
 		// ... and all shared waiters
 		{
-			const auto unparked = unpark_shared_if_needed(l, latch_value, waiters_value);
+			const auto unparked = unpark_shared_if_needed(l, hint, waiters_value);
 			if (unparked)
 				return unparked;
 		}
@@ -472,7 +477,7 @@ protected:
 	// Chooses a backoff protocol
 	backoff_aggressiveness select_backoff_protocol(const float rand_seed, Latch &l) const noexcept {
 		if constexpr (op == operation::lock_shared)
-			return backoff_aggressiveness::relaxed;
+			return backoff_aggressiveness::aggressive;
 
 		// Calculate relevant waiters count
 		const auto waiters_value = l.load_waiters_counters(memory_order::relaxed);
@@ -536,11 +541,10 @@ protected:
 	// Releases the lock.
 	void release(Latch &l) noexcept {
 		// Release latch
-		l.template release<op>(std::move(lock), memory_order::release);
+		const auto hint = l.template release<op>(std::move(lock), memory_order::release);
 		
 		// Unpark waiters
-		const auto latch_value = l.load(memory_order::acquire);
-		unpark_if_needed<op>(l, latch_value);
+		unpark_if_needed<op>(l, hint);
 	}
 
 	/*
@@ -621,6 +625,11 @@ protected:
 					return true;
 
 				// Timeout
+				if constexpr (Latch::use_slots) {
+					// Multi-slot mode: Latch acquire() holds a slot and reverts on failure. This might cause a waiter to park.
+					// Therefore we need to do an unpark here.
+					unpark_if_needed(l, latch_availability_hint::free);
+				}
 				return false;
 			}
 
