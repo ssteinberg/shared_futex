@@ -119,8 +119,8 @@ but not of
 [CopyConstructible](https://en.cppreference.com/w/cpp/concept/CopyConstructible)
 or 
 [CopyAssignable](https://en.cppreference.com/w/cpp/concept/CopyAssignable). 
-Therefore lock guards can be safely moved around, swapped and empty constructed
-with empty brace initialization.
+Therefore lock guards can be safely moved around, swapped and empty assigned
+via empty brace initialization.
 
 ```C++
 // Swap
@@ -153,8 +153,6 @@ assert(!l0.owns_lock() && l1.owns_lock());
 
 // Dropping and not adopting the lock will trigger an assert
 ```
-
-<br/>
 
 #### Backoff policies
 
