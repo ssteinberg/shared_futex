@@ -477,7 +477,7 @@ protected:
 	// Chooses a backoff protocol
 	backoff_aggressiveness select_backoff_protocol(const float rand_seed, Latch &l) const noexcept {
 		if constexpr (op == operation::lock_shared)
-			return backoff_aggressiveness::aggressive;
+			return backoff_aggressiveness::relaxed;
 
 		// Calculate relevant waiters count
 		const auto waiters_value = l.load_waiters_counters(memory_order::relaxed);

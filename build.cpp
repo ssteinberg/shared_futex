@@ -28,12 +28,12 @@ void compile_futex(F&& f) noexcept {
 		{
 			auto l = make_upgradeable_lock<>(f);
 			// Upgrade with timeout
-			auto up1 = try_upgrade_lock_until<>(std::move(l), std::chrono::steady_clock::now() + std::chrono::nanoseconds(1));
+			auto up = try_upgrade_lock_until<>(std::move(l), std::chrono::steady_clock::now() + std::chrono::nanoseconds(1));
 		}
 		{
 			auto l = make_upgradeable_lock<>(f);
 			// Upgrade with timeout
-			auto up2 = try_upgrade_lock_for<>(std::move(l), std::chrono::nanoseconds(1));
+			auto up = try_upgrade_lock_for<>(std::move(l), std::chrono::nanoseconds(1));
 		}
 	}
 	
@@ -47,7 +47,14 @@ void compile_futex(F&& f) noexcept {
 		// Defer lock
 		auto l0 = make_shared_lock<>(f, std::defer_lock);
 		auto l1 = make_shared_lock<>(f, std::defer_lock);
+		// Lock multiple locks with deadlock avoidence
 		std::lock(l0, l1);
+	}
+
+	{
+		// Lock with timeout
+		auto l0 = make_shared_lock<>(f, std::chrono::high_resolution_clock::now() + std::chrono::nanoseconds(100));	// Time point
+		auto l1 = make_shared_lock<>(f, std::chrono::nanoseconds(100));	// Duration
 	}
 
 	{
@@ -95,8 +102,6 @@ void compile_futex(F&& f) noexcept {
 		auto l2 = make_exclusive_lock<>(f, std::defer_lock);
 		l1 = std::move(l2);	// Will unlock
 		assert(!l0.owns_lock() && !l1.owns_lock() && !l2.owns_lock());
-
-		make_exclusive_lock<>(f);
 	}
 }
 
