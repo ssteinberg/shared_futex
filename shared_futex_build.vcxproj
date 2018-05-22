@@ -25,7 +25,7 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
-    <ProjectGuid>{EB638DE1-7A36-478F-9E29-CAC55A56652A}</ProjectGuid>
+    <ProjectGuid>{FDF7E88D-D994-4F4A-A92B-9A80D7529D75}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>sharedfutextest</RootNamespace>
     <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
@@ -77,15 +77,23 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
+    <OutDir>$(SolutionDir)bin\shared_futex_build\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\shared_futex_build\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
+    <OutDir>$(SolutionDir)bin\shared_futex_build\$(Configuration)$(Platform)\</OutDir>
+    <IntDir>$(SolutionDir)build\shared_futex_build\$(Configuration)$(Platform)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
+    <OutDir>$(SolutionDir)bin\shared_futex_build\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\shared_futex_build\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
+    <OutDir>$(SolutionDir)bin\shared_futex_build\$(Configuration)$(Platform)\</OutDir>
+    <IntDir>$(SolutionDir)build\shared_futex_build\$(Configuration)$(Platform)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>

@@ -321,7 +321,7 @@ private:
 				desired_latch = latch_descriptor{ expected };
 				desired_latch.set_lock_held_flag();
 				desired_latch.template inc_consumers<op>(1);
-				
+
 				if constexpr (collect_statistics)
 					++debug_statistics.lock_rmw_instructions;
 
