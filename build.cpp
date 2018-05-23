@@ -5,6 +5,16 @@
 
 #include "shared_futex/shared_futex.hpp"
 
+template <int N>
+struct global_class {
+	global_class(ste::shared_futex &f) noexcept {
+		// Lock mutex
+		auto l = ste::make_exclusive_lock(f);
+	}
+};
+static ste::shared_futex static_futex;
+global_class<1> global{ static_futex };
+
 template <typename F>
 void compile_futex(F&& f) noexcept {
 	using namespace ste;

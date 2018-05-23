@@ -154,6 +154,11 @@ assert(!l0.owns_lock() && l1.owns_lock());
 // Dropping and not adopting the lock will trigger an assert
 ```
 
+`shared_futex` default constructor is `constexpr` therefore a `shared_futex`
+is statically initialized making it safe to lock a mutex in the 
+constructor of any static or global object.<br/>
+See [c++ initialization order of non-local variables](http://en.cppreference.com/w/cpp/language/initialization#Non-local_variables).
+
 #### Backoff policies
 
 When an intial lock attempt fails the locking protocol keeps
