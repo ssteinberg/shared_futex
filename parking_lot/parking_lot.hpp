@@ -233,7 +233,7 @@ class parking_lot {
 		std::pair<parking_lot_wait_state, std::optional<NodeData>>,
 		std::pair<parking_lot_wait_state, std::optional<int>>
 	>;
-	using uid_t = std::size_t;
+	using uid_t = std::uint64_t;
 
 	static constexpr uid_t unused_uid = {};
 
@@ -274,19 +274,18 @@ private:
 		return { wait_result.second, std::move(data) };
 	}
 	
-	static thread_local uid_t thread_uid_seed;
+	static std::atomic<uid_t> uid_gen;
+	// Generates a UID for a parking lot using global atomic variable
 	static uid_t generate_uid() noexcept {
-		// Generates a UID by hash-combining the thread-id with a thread-unique value from the thread-local thread_uid_seed.
-		const auto uid = thread_uid_seed++;
-		auto hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
-		hash_combine<uid_t>{}(hash, uid);
-
-		// Make sure hash isn't unused_uid (highly unlikely)
-		return hash != unused_uid ? hash : uid_t{ 1 };
+		const uid_t uid = uid_gen++;
+		if (uid != unused_uid)
+			return uid;
+		return uid_gen++;
 	}
 
 public:
 	constexpr parking_lot() noexcept : lot_tag(generate_uid()) {}
+	~parking_lot() noexcept = default;
 	parking_lot(parking_lot &&o) noexcept : lot_tag(std::move(o.lot_tag)) {
 		o.lot_tag = unused_uid;
 	}
@@ -295,6 +294,8 @@ public:
 		o.lot_tag = unused_uid;
 		return *this;
 	}
+	parking_lot(const parking_lot &o) = delete;
+	parking_lot &operator=(const parking_lot &o) = delete;
 
 	/*
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*.
@@ -417,7 +418,7 @@ public:
 	 *	@return	Number of nodes that were signaled
 	 */
 	template <typename... Args>
-	std::size_t unpark_one(const Key &key, Args&&... args) noexcept {
+	std::size_t unpark_one(const Key &key, Args&&... args) const noexcept {
 		// This parking lot is no longer in use?
 		assert(lot_tag != unused_uid);
 
@@ -457,7 +458,7 @@ public:
 	 *	@return	Number of nodes that were signaled
 	 */
 	template <typename... Args>
-	std::size_t unpark_all(const Key &key, const Args&... args) noexcept {
+	std::size_t unpark_all(const Key &key, const Args&... args) const noexcept {
 		// This parking lot is no longer in use?
 		assert(lot_tag != unused_uid);
 
@@ -494,6 +495,6 @@ public:
 };
 
 template <typename Key, typename NodeData>
-thread_local typename parking_lot<Key, NodeData>::uid_t parking_lot<Key, NodeData>::thread_uid_seed;
+std::atomic<typename parking_lot<Key, NodeData>::uid_t> parking_lot<Key, NodeData>::uid_gen;
 
 }

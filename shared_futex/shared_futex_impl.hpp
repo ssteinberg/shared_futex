@@ -1,5 +1,5 @@
 // shared_futex
-// � Shlomi Steinberg, 2015-2018
+// © Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -330,6 +330,8 @@ class shared_futex_locking_protocol {
 public:
 	using latch_lock_t = typename Latch::latch_lock;
 
+	static constexpr operation locking_protocol_operation = op;
+
 private:
 	// Pre-thread random generator
 	static thread_local random_generator rand;
@@ -337,11 +339,6 @@ private:
 	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
 
 	// Helper values
-	using unpark_tactic = unpark_tactic;
-	using operation = operation;
-	using backoff_aggressiveness = backoff_aggressiveness;
-	using acquisition_primality = acquisition_primality;
-	using backoff_result = backoff_result;
 	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
 
 	struct park_slot_t {

@@ -7,15 +7,19 @@
 
 namespace ste {
 
+template <typename Data = void>
 class condition_variable {
 private:
-	using parking_lot_t = parking_lot<void>;
+	using parking_lot_t = parking_lot<std::size_t, Data>;
 
 private:
 	parking_lot_t parking_lot;
 
 public:
-
+	template <typename... Args>
+	std::size_t signal(Args&&... args) const noexcept {
+		
+	}
 };
 
 }
