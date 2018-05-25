@@ -5,7 +5,6 @@
 
 #include "shared_futex/shared_futex.hpp"
 
-template <int N>
 struct global_class {
 	global_class(ste::shared_futex &f) noexcept {
 		// Lock mutex
@@ -13,7 +12,7 @@ struct global_class {
 	}
 };
 static ste::shared_futex static_futex;
-global_class<1> global{ static_futex };
+global_class global{ static_futex };
 
 template <typename F>
 void compile_futex(F&& f) noexcept {

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "../utils/hash_combine.hpp"
+
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
@@ -56,10 +58,12 @@ protected:
 	}
 
 public:
-	template <typename P, typename K>
-	parking_lot_node_base(P* id, K &&key) noexcept {
-		using T = std::remove_cv_t<std::remove_reference_t<K>>;
-
+	template <typename UID, typename K>
+	parking_lot_node_base(const UID &id, K &&key) noexcept {
+		using T = std::decay_t<K>;
+		
+		static_assert(std::is_trivial_v<std::decay_t<UID>>, "UID must be trivial");
+		static_assert(sizeof(UID) <= sizeof(decltype(tag.id)), "UID must be the size of a pointer or less");
 		static_assert(std::is_trivially_destructible_v<T>, "key must be trivially destructible");
 		static_assert(std::is_trivially_copy_constructible_v<T> || !std::is_lvalue_reference_v<K&&>,
 					  "key must be trivially copy constructible when taking an l-value");
@@ -67,7 +71,7 @@ public:
 					  "key must be trivially move constructible when taking an r-value");
 		static_assert(sizeof(T) <= key_size, "key must be no larger than key_size");
 
-		tag.id = id;
+		*reinterpret_cast<UID*>(&tag.id) = id;
 		::new (&tag.key) T(std::forward<K>(key));
 	}
 	virtual ~parking_lot_node_base() noexcept = default;
@@ -89,11 +93,12 @@ public:
 	 *	@brief	Checks if the serialized tag equals to the supplied id and key.
 	 *			K should be the same type as passed to the ctor.
 	 */
-	template <typename P, typename K>
-	bool id_equals(P* id, const K &key) const noexcept {
+	template <typename UID, typename K>
+	bool id_equals(const UID &id, const K &key) const noexcept {
+		static_assert(sizeof(UID) <= sizeof(decltype(tag.id)), "UID must be the size of a pointer or less");
 		static_assert(sizeof(K) <= key_size, "key must be no larger than key_size");
 
-		return tag.id == id && *reinterpret_cast<const K*>(&tag.key) == key;
+		return *reinterpret_cast<const UID*>(&tag.id) == id && *reinterpret_cast<const K*>(&tag.key) == key;
 	}
 	bool is_signalled() const noexcept { return signaled; }
 
@@ -201,22 +206,20 @@ public:
 	bool is_empty() const noexcept { return head == nullptr; }
 
 public:
+	constexpr parking_lot_slot() noexcept = default;
+
 	static constexpr auto slots_count = 2048;
 
 	/*
 	*	@brief	Returns a static parking lot slot for a given id/key pair.
 	*			See parking_lot_node_base::parking_lot_node_base(K&&).
 	*/
-	template <typename P, typename K>
-	static parking_lot_slot& slot_for(P* id, const K &key) noexcept {
-		const auto key_hash = std::hash<std::decay_t<K>>{}(key);
-		const auto id_hash = std::hash<P*>{}(id);
+	template <typename UID, typename K>
+	static parking_lot_slot& slot_for(const UID &id, const K &key) noexcept {
+		auto x = std::hash<std::decay_t<K>>{}(key);
+		hash_combine<std::decay_t<UID>>{}(x, id);
 
-		// boost::hash_combine
-		const auto x = key_hash + 0x9e3779b9 + (id_hash << 6) + (id_hash >> 2);
-		const auto idx = (id_hash ^ x) % slots_count;
-
-		return slots[idx];
+		return slots[x % slots_count];
 	}
 	static std::array<parking_lot_slot, slots_count> slots;
 };
@@ -230,9 +233,15 @@ class parking_lot {
 		std::pair<parking_lot_wait_state, std::optional<NodeData>>,
 		std::pair<parking_lot_wait_state, std::optional<int>>
 	>;
+	using uid_t = std::size_t;
+
+	static constexpr uid_t unused_uid = {};
 
 public:
 	using node_t = parking_lot_detail::parking_lot_node<NodeData>;
+
+private:
+	uid_t lot_tag{ unused_uid };
 
 private:
 	template <typename PostPark, typename Clock, typename Duration>
@@ -264,8 +273,29 @@ private:
 
 		return { wait_result.second, std::move(data) };
 	}
+	
+	static thread_local uid_t thread_uid_seed;
+	static uid_t generate_uid() noexcept {
+		// Generates a UID by hash-combining the thread-id with a thread-unique value from the thread-local thread_uid_seed.
+		const auto uid = thread_uid_seed++;
+		auto hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+		hash_combine<uid_t>{}(hash, uid);
+
+		// Make sure hash isn't unused_uid (highly unlikely)
+		return hash != unused_uid ? hash : uid_t{ 1 };
+	}
 
 public:
+	constexpr parking_lot() noexcept : lot_tag(generate_uid()) {}
+	parking_lot(parking_lot &&o) noexcept : lot_tag(std::move(o.lot_tag)) {
+		o.lot_tag = unused_uid;
+	}
+	parking_lot &operator=(parking_lot &&o) noexcept {
+		lot_tag = std::move(o.lot_tag);
+		o.lot_tag = unused_uid;
+		return *this;
+	}
+
 	/*
 	 *  @brief	Attempts to park the calling thread in a parking slot selected via the supplied key until the thread is unparked via unpark_*.
 	 *  
@@ -349,9 +379,12 @@ public:
 							 PostPark &&post_park,
 							 Key &&key,
 							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
+		// This parking lot is no longer in use?
+		assert(lot_tag != unused_uid);
+
 		// Create new node
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
-		node_t node(this, std::move(key));
+		auto &park = parking_lot_detail::parking_lot_slot::slot_for(lot_tag, key);
+		node_t node(lot_tag, std::move(key));
 
 		// Register node
 		{
@@ -385,7 +418,10 @@ public:
 	 */
 	template <typename... Args>
 	std::size_t unpark_one(const Key &key, Args&&... args) noexcept {
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
+		// This parking lot is no longer in use?
+		assert(lot_tag != unused_uid);
+
+		auto &park = parking_lot_detail::parking_lot_slot::slot_for(lot_tag, key);
 
 		// Unpark one
 		{
@@ -396,7 +432,7 @@ public:
 			for (decltype(node) next = node ? node->next : nullptr; 
 				 node; 
 				 node = next, next = node ? node->next : nullptr) {
-				if (node->id_equals(this, key)) {
+				if (node->id_equals(lot_tag, key)) {
 					assert(!node->is_signalled());
 					auto n = static_cast<node_t*>(node);
 
@@ -422,7 +458,10 @@ public:
 	 */
 	template <typename... Args>
 	std::size_t unpark_all(const Key &key, const Args&... args) noexcept {
-		auto &park = parking_lot_detail::parking_lot_slot::slot_for(this, key);
+		// This parking lot is no longer in use?
+		assert(lot_tag != unused_uid);
+
+		auto &park = parking_lot_detail::parking_lot_slot::slot_for(lot_tag, key);
 		std::size_t count = 0;
 
 		// Unpark all
@@ -434,7 +473,7 @@ public:
 			for (decltype(node) next = node ? node->next : nullptr; 
 				 node; 
 				 node = next, next = node ? node->next : nullptr) {
-				if (node->id_equals(this, key)) {
+				if (node->id_equals(lot_tag, key)) {
 					assert(!node->is_signalled());
 					auto n = static_cast<node_t*>(node);
 
@@ -453,5 +492,8 @@ public:
 		return count;
 	}
 };
+
+template <typename Key, typename NodeData>
+thread_local typename parking_lot<Key, NodeData>::uid_t parking_lot<Key, NodeData>::thread_uid_seed;
 
 }
