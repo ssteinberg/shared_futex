@@ -4,6 +4,10 @@
 // Build test for shared_futex
 
 #include "shared_futex/shared_futex.hpp"
+#include "condition_variable/condition_variable.hpp"
+
+#include <atomic>
+#include <thread>
 
 struct global_class {
 	global_class(ste::shared_futex &f) noexcept {
@@ -22,6 +26,10 @@ void compile_futex(F&& f) noexcept {
 	{
 		// Lock exclusive
 		auto l = make_exclusive_lock(f);
+	}
+	{
+		// Lock exclusive
+		auto l = make_lock<shared_futex_lock_class::exclusive>(f);
 	}
 	{
 		// Lock shared
@@ -122,6 +130,47 @@ void compile_futex(F&& f) noexcept {
 		
 		l1 = {};	// Will unlock
 		assert(!l0.owns_lock() && !l1.owns_lock());
+	}
+	
+	condition_variable cv;
+	{
+		std::atomic<bool> var = false;
+		std::thread signalling_thread = std::thread([&]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+			auto l = make_exclusive_lock(f);
+			var = true;
+			// Signal
+			cv.signal(std::move(l));
+		});
+
+		// Acquire lock when predicate is true
+		auto lg = make_lock_when<shared_futex_lock_class::exclusive>(f, cv, [&]() { return var.load(); });
+		assert(lg);
+		signalling_thread.join();
+	}
+	{
+		std::atomic<bool> var = false;
+		std::array<std::thread, 4> threads;
+		for (auto &t : threads) {
+			t = std::thread([&]() {
+				// Wait upon cv and predicate with time-out
+				auto lg = make_lock_when<shared_futex_lock_class::shared>(cv_predicate_thread_safe, 
+																		  f, cv, [&]() { return var.load(); }, std::chrono::seconds(10));
+				assert(lg);
+			});
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+		auto l = make_exclusive_lock(f);
+		var = true;
+		// Signal
+		const auto signalled = cv.signal(std::move(l));
+		assert(signalled == threads.size());
+		
+		for (auto &t : threads)
+			t.join();
 	}
 }
 

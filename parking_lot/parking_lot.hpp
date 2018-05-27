@@ -90,7 +90,7 @@ public:
 	parking_lot_node_base &operator=(const parking_lot_node_base&) = delete;
 
 	bool check_predicate() const noexcept {
-		return predicate && predicate();
+		return !predicate || predicate();
 	}
 
 	/*
@@ -466,7 +466,7 @@ public:
 	 *							going to be actually performed, as signalling, timeout or predicate might be triggered.
 	 *							Called while holding slot lock.
 	*/
-	template <typename ParkPredicate, typename OnPark, typename PostPark, typename Clock, typename Duration>
+	template <typename ParkPredicate, typename OnPark, typename Clock, typename Duration>
 	park_return_t park_until(ParkPredicate&& predicate,
 							 OnPark&& on_park,
 							 Key&& key,
@@ -550,7 +550,7 @@ public:
 						continue;
 
 					park.erase(node);
-					nodes.push_back(node);
+					nodes.push_back(n);
 					
 					if (count != std::numeric_limits<std::size_t>::max() && nodes.size() == count)
 						break;

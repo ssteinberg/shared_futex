@@ -770,6 +770,22 @@ auto make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 }
 
 /*
+ *	@brief	Locks the futex in mode specified by lock_class and returns a lock_guard.
+ */
+template <
+	shared_futex_lock_class lock_class, 
+	typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, 
+	typename SharedFutex, typename... Args
+>
+auto make_lock(SharedFutex &l, Args &&... args) noexcept {
+	static constexpr shared_futex_detail::operation op = shared_futex_detail::op_for_class(lock_class);
+	return lock_guard<
+		SharedFutex, 
+		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, op>
+	>(l, std::forward<Args>(args)...);
+}
+
+/*
 *	@brief	Upgrades the lock owned by an upgradeable lock_guard to an exclusive lock, consuming the guard and returning an exclusive one.
 *			Lock must have been successfully acquired via an upgrade lock.
 *			
