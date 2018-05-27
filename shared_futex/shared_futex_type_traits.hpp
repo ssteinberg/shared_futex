@@ -38,7 +38,7 @@ enum class shared_futex_lock_class {
 
 namespace shared_futex_detail {
 
-constexpr shared_futex_lock_class resolve_lock_class(operation op) noexcept {
+constexpr shared_futex_lock_class resolve_lock_class(const operation op) noexcept {
 	switch (op) {
 	case operation::lock_shared:
 		return shared_futex_lock_class::shared;

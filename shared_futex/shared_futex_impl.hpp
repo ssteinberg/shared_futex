@@ -206,9 +206,8 @@ public:
 template <typename Latch, typename BackoffPolicy, shared_futex_parking_policy parking_mode>
 struct shared_futex_backoff_protocol {
 	using backoff_return_t = backoff_result;
-	
 	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
-	
+
 	/*
 	 *	@brief	If returns true than it is the unparker duty to unregister from park counters, otherwise the unparked waiter does the
 	 *			unregistaration.
@@ -239,14 +238,14 @@ struct shared_futex_backoff_protocol {
 											  until);
 
 		backoff_result result = backoff_result::park_predicate_triggered;
-		if (wait_state == parking_lot_wait_state::signaled) {
+		if (wait_state == parking_lot_wait_state::signalled) {
 			// Signalled. If unparker is responsible for unregistration, then we know that unregistration was already handled.
 			if constexpr (is_unparker_responsible_for_unregistration<op>())
 				result = backoff_result::unparked_and_unregistered;
 			else
 				result = backoff_result::unparked;
 		}
-		else if (wait_state == parking_lot_wait_state::park_validation_failed) {
+		else if (wait_state == parking_lot_wait_state::predicate) {
 			// Predicate was triggered before parking could take place.
 			result = backoff_result::park_predicate_triggered;
 		}
@@ -328,24 +327,16 @@ class shared_futex_locking_protocol {
 	using waiters_descriptor = typename Latch::waiters_descriptor;
 
 public:
-	using latch_lock_t = typename Latch::latch_lock;
-
 	static constexpr operation locking_protocol_operation = op;
+	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
+
+	using latch_lock_t = typename Latch::latch_lock;
+	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
 
 private:
 	// Pre-thread random generator
 	static thread_local random_generator rand;
-	
-	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
-
-	// Helper values
-	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
-
-	struct park_slot_t {
-		typename Latch::parking_key_t key;
-	};
-	
-private:
+	// Held latch lock
 	latch_lock_t lock;
 
 protected:
