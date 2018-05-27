@@ -694,7 +694,7 @@ public:
 												   until);
 		}
 
-		return parking_lot_wait_state::signaled;
+		return parking_lot_wait_state::signalled;
 	}
 	
 	/*

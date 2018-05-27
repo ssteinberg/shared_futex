@@ -1,5 +1,5 @@
 // shared_futex
-// � Shlomi Steinberg, 2015-2018
+// © Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -206,9 +206,8 @@ public:
 template <typename Latch, typename BackoffPolicy, shared_futex_parking_policy parking_mode>
 struct shared_futex_backoff_protocol {
 	using backoff_return_t = backoff_result;
-	
 	static constexpr bool parking_allowed = parking_mode != shared_futex_parking_policy::none;
-	
+
 	/*
 	 *	@brief	If returns true than it is the unparker duty to unregister from park counters, otherwise the unparked waiter does the
 	 *			unregistaration.
@@ -239,14 +238,14 @@ struct shared_futex_backoff_protocol {
 											  until);
 
 		backoff_result result = backoff_result::park_predicate_triggered;
-		if (wait_state == parking_lot_wait_state::signaled) {
+		if (wait_state == parking_lot_wait_state::signalled) {
 			// Signalled. If unparker is responsible for unregistration, then we know that unregistration was already handled.
 			if constexpr (is_unparker_responsible_for_unregistration<op>())
 				result = backoff_result::unparked_and_unregistered;
 			else
 				result = backoff_result::unparked;
 		}
-		else if (wait_state == parking_lot_wait_state::park_validation_failed) {
+		else if (wait_state == parking_lot_wait_state::predicate) {
 			// Predicate was triggered before parking could take place.
 			result = backoff_result::park_predicate_triggered;
 		}
@@ -328,27 +327,16 @@ class shared_futex_locking_protocol {
 	using waiters_descriptor = typename Latch::waiters_descriptor;
 
 public:
+	static constexpr operation locking_protocol_operation = op;
+	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
+
 	using latch_lock_t = typename Latch::latch_lock;
+	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
 
 private:
 	// Pre-thread random generator
 	static thread_local random_generator rand;
-	
-	static constexpr shared_futex_parking_policy parking_mode = futex_policy::parking_policy;
-
-	// Helper values
-	using unpark_tactic = unpark_tactic;
-	using operation = operation;
-	using backoff_aggressiveness = backoff_aggressiveness;
-	using acquisition_primality = acquisition_primality;
-	using backoff_result = backoff_result;
-	using backoff_protocol = shared_futex_backoff_protocol<Latch, BackoffPolicy, parking_mode>;
-
-	struct park_slot_t {
-		typename Latch::parking_key_t key;
-	};
-	
-private:
+	// Held latch lock
 	latch_lock_t lock;
 
 protected:
@@ -778,6 +766,22 @@ auto make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
 	return lock_guard<
 		SharedFutex, 
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
+	>(l, std::forward<Args>(args)...);
+}
+
+/*
+ *	@brief	Locks the futex in mode specified by lock_class and returns a lock_guard.
+ */
+template <
+	shared_futex_lock_class lock_class, 
+	typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, 
+	typename SharedFutex, typename... Args
+>
+auto make_lock(SharedFutex &l, Args &&... args) noexcept {
+	static constexpr shared_futex_detail::operation op = shared_futex_detail::op_for_class(lock_class);
+	return lock_guard<
+		SharedFutex, 
+		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, op>
 	>(l, std::forward<Args>(args)...);
 }
 
