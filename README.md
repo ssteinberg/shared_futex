@@ -228,7 +228,112 @@ lock elision explcitly via transactional memory.
 
 #### Condition variables
 
-*WIP*
+`condition_variable` is designed to replace `std::condition_variable` when
+working with a `shared_futex`.
+
+```C++
+condition_variable cv;
+// Wait upon cv given a predicate
+auto lg = make_lock_when<shared_futex_lock_class::exclusive>(f, cv);
+```
+This will park until `cv` is signalled at which point the 
+lock will be acquired in exclusive mode and a `lock_guard` returned. 
+
+A predicate can also be supplied:
+```C++
+auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv,
+	[]() noexcept -> bool { ... });
+```
+This form checks the predicate, and if the predicate
+is unsatisfied, parks the calling thread in one atomic operation.
+Upon signalling the lock will acquired and the predicate checked
+again.
+
+The above forms can also be used with a time-out:
+```C++
+auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv,
+	std::chrono::seconds(10));
+```
+```C++
+const auto now = std::chrono::steady_clock::now();
+auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv,
+	now + std::chrono::seconds(10));
+```
+```C++
+auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv,
+	[]() noexcept -> bool { ... },
+	std::chrono::millisecond(500));
+```
+```C++
+const auto now = std::chrono::steady_clock::now();
+auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv,
+	[]() noexcept -> bool { ... },
+	now + std::chrono::millisecond(500));
+```
+
+The `condition_variable` can also be waited upon explicitly inside 
+a critical section:
+```C++
+auto lg = make_exclusive_lock(f);
+const auto predicate = []() noexcept -> bool { ... };
+while (!pred())
+	cv.wait(lg);
+```
+Which is functionally equivalent to 
+`cv.wait(lg, predicate)`. In addition a timeout can
+be provided via `wait_for()` and `wait_until()`. The 
+`cv.wait*()` overloads return a `parking_lot_wait_state` indicating
+wait result.
+
+Signalling is performed explicitly by calling a `condition_variable`'s
+`signal()` or `signal_n()`, where the later variant sets an upper limit
+on the total signalled thread count. It is important to remember that 
+unlike `std::condition_variable`, both forms **will always unpark up to
+a single exclusive waiter or up to a single upgradeable waiter and 
+multiple shared waiters**. 
+
+```C++
+auto lg = make_exclusive_lock(f);
+const auto unparked_count = cv.signal(std::move(lg));
+```
+```C++
+auto lg = make_exclusive_lock(f);
+const auto unparked_count = cv.signal_n(3, std::move(lg));
+assert(unparked_count <= 3);
+```
+Calling `signal*()` consumes the lock and releases it.
+
+Unparks and contex-switched are expensive, therefore if a predicate
+is supplied to `wait*()` the `condition_vartiable` will check 
+the unpark candidates' predicates **before** unparking. This is done
+while holding the lock supplied to `signal*`. It is important to
+remember that the lock classes supplied to `wait*()` and `signal*()`
+operations can be non-mutually exclusive which might result in
+a concurrent access to a predicate. It is the user responsibility to
+ensure the predicate's safety in such circumstances.
+
+#### Type traits
+
+A few type traits are provided in `shared_futex_type_traits.hpp`.
+
+* Checks if T is a `shared_futex` variant:
+```C++
+template <typename T> struct is_shared_futex_type;
+template <typename T> inline constexpr bool is_shared_futex_type_v;
+```
+
+* Checks if T is a `shared_futex` variant that supports parking:
+```C++
+template <typename T> struct is_shared_futex_parkable;
+template <typename T> inline constexpr bool is_shared_futex_parkable_v;
+```
+
+* Provides the lock class (see `shared_futex_lock_class`) of a `lock_guard`:
+```C++
+template <typename T> struct lock_class;
+template <typename T> inline constexpr shared_futex_lock_class lock_class_v;
+```
+
 
 #### Hardware lock elision
 

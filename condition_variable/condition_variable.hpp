@@ -14,10 +14,6 @@
 
 namespace ste {
 
-// Tag for condition_variable::wait methods
-struct cv_predicate_thread_safe_t {};
-inline constexpr cv_predicate_thread_safe_t cv_predicate_thread_safe;
-
 class condition_variable {
 private:
 	using park_slot_key_t = std::size_t;
@@ -62,54 +58,40 @@ private:
 
 public:
 	constexpr condition_variable() noexcept = default;
-
+	
 	/*
 	 *	@brief	Initially checks predicate and if not satisfied parks the calling thread and waits for signal. Returns once signalled and
 	 *			predicate is satisfied. Upon successful return lock is acquired.
 	 *			
 	 *	@return	Wait state. See parking_lot_wait_state.
 	 */
-	template <
-		typename SharedFutex, typename SharedFutexLockingProtocol,
-		typename Predicate, typename Clock, typename Duration
-	>
+	template <typename SharedFutex, typename SharedFutexLockingProtocol, typename Predicate>
 	wait_return_t wait(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
-					   Predicate &&predicate,
-					   const std::chrono::time_point<Clock, Duration> &until = std::chrono::steady_clock::time_point::max()) noexcept {
-		static constexpr auto lg_class = lock_class_v<lock_guard<SharedFutex, SharedFutexLockingProtocol>>;
-
-		// Acquire inital lock
-		if (!lg && !lg.try_lock_until(until))
-			return parking_lot_wait_state::timeout;
-
-		// Check predicate under lock
-		if (predicate())
-			return parking_lot_wait_state::predicate;
-
-		const auto on_park = [&]() {
-			// On park, release the lock.
-			// This is done under parking_lot node lock culminating an atomic release and park.
-			lg.unlock();
-		};
-		for (;;) {
-			// Park
-			auto wait_result = wait_until_impl<lg_class>(on_park,
-														 until);
-
-			// Acquire lock
-			if (wait_result == parking_lot_wait_state::timeout ||
-				!lg.try_lock_until(until))
-				return parking_lot_wait_state::timeout;
-
-			// Check predicate under lock
-			if (predicate())
-				return parking_lot_wait_state::signalled;
-		}
+					   Predicate &&predicate) noexcept {
+		return wait_until(lg,
+						  std::forward<Predicate>(predicate),
+						  std::chrono::steady_clock::time_point::max());
 	}
 	/*
 	 *	@brief	Initially checks predicate and if not satisfied parks the calling thread and waits for signal. Returns once signalled and
-	 *			predicate is satisfied. Upon successful return lock is acquired.
-	 *			This is a fast version that assumes the predicate() is thread-safe.
+	 *			predicate is satisfied or timeout has occured. Upon successful return lock is acquired.
+	 *			
+	 *	@return	Wait state. See parking_lot_wait_state.
+	 */
+	template <
+		typename SharedFutex, typename SharedFutexLockingProtocol,
+		typename Predicate, class Rep, class Period
+	>
+	wait_return_t wait_for(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
+						   Predicate &&predicate,
+						   const std::chrono::duration<Rep, Period> &duration) noexcept {
+		return wait_until(lg,
+						  std::forward<Predicate>(predicate),
+						  std::chrono::steady_clock::now() + duration);
+	}
+	/*
+	 *	@brief	Initially checks predicate and if not satisfied parks the calling thread and waits for signal. Returns once signalled and
+	 *			predicate is satisfied or timeout has occured. Upon successful return lock is acquired.
 	 *			
 	 *	@return	Wait state. See parking_lot_wait_state.
 	 */
@@ -117,23 +99,27 @@ public:
 		typename SharedFutex, typename SharedFutexLockingProtocol,
 		typename Predicate, typename Clock, typename Duration
 	>
-	wait_return_t wait(cv_predicate_thread_safe_t,
-					   lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
-					   Predicate &&predicate,
-					   const std::chrono::time_point<Clock, Duration> &until = std::chrono::steady_clock::time_point::max()) noexcept {
+	wait_return_t wait_until(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
+							 Predicate &&predicate,
+							 const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		static constexpr auto lg_class = lock_class_v<lock_guard<SharedFutex, SharedFutexLockingProtocol>>;
+		
+		if (!lg.try_lock_until(until))
+			return parking_lot_wait_state::timeout;
 
-		// Check predicate without explicit locking
+		// Check predicate
 		if (predicate())
 			return parking_lot_wait_state::predicate;
-
-		if (lg)
-			lg.unlock();
-
+		
+		const auto on_park = [&]() {
+			// On park, release the lock.
+			// This is done under parking_lot node lock culminating an atomic release and park.
+			lg.unlock(); 
+		};
 		for (;;) {
 			// Park with predicate
 			auto wait_result = wait_until_impl<lg_class>(predicate,
-														 []() {},		// on_park
+														 on_park,
 														 until);
 
 			// Acquire lock
@@ -153,19 +139,49 @@ public:
 	 *			
 	 *	@return	Wait state. See parking_lot_wait_state.
 	 */
+	template <typename SharedFutex, typename SharedFutexLockingProtocol>
+	wait_return_t wait(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg) noexcept {
+		return wait_until(lg,
+						  std::chrono::steady_clock::time_point::max());
+	}
+	/*
+	 *	@brief	Initially checks predicate and if not satisfied parks the calling thread and waits for signal. Returns once signalled and
+	 *			predicate is satisfied or timeout has occured. Upon successful return lock is acquired.
+	 *			
+	 *	@return	Wait state. See parking_lot_wait_state.
+	 */
+	template <
+		typename SharedFutex, typename SharedFutexLockingProtocol,
+		class Rep, class Period
+	>
+	wait_return_t wait_for(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
+						   const std::chrono::duration<Rep, Period> &duration) noexcept {
+		return wait_until(lg,
+						  std::chrono::steady_clock::now() + duration);
+	}
+	/*
+	 *	@brief	Initially checks predicate and if not satisfied parks the calling thread and waits for signal. Returns once signalled and
+	 *			predicate is satisfied or timeout has occured. Upon successful return lock is acquired.
+	 *			
+	 *	@return	Wait state. See parking_lot_wait_state.
+	 */
 	template <
 		typename SharedFutex, typename SharedFutexLockingProtocol,
 		typename Clock, typename Duration
 	>
-	wait_return_t wait(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
-					   const std::chrono::time_point<Clock, Duration> &until = std::chrono::steady_clock::time_point::max()) noexcept {
+	wait_return_t wait_until(lock_guard<SharedFutex, SharedFutexLockingProtocol> &lg,
+					   const std::chrono::time_point<Clock, Duration> &until) noexcept {
 		static constexpr auto lg_class = lock_class_v<lock_guard<SharedFutex, SharedFutexLockingProtocol>>;
 
-		if (lg)
-			lg.unlock();
-
 		// Park
-		auto wait_result = wait_until_impl<lg_class>(until);
+		const auto on_park = [&]() {
+			// On park, release the lock.
+			// This is done under parking_lot node lock culminating an atomic release and park.
+			if (lg)
+				lg.unlock(); 
+		};
+		auto wait_result = wait_until_impl<lg_class>(on_park,
+													 until);
 
 		// Acquire lock
 		if (wait_result == parking_lot_wait_state::timeout ||
@@ -233,7 +249,7 @@ auto make_lock_when(SharedFutex &l, condition_variable &cv, const std::chrono::t
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, op>
 	> lg(l, std::defer_lock);
 
-	cv.wait(lg, until);
+	cv.wait_until(lg, until);
 	return lg;
 }
 
@@ -283,7 +299,7 @@ auto make_lock_when(SharedFutex &l, condition_variable &cv,
 		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, op>
 	> lg(l, std::defer_lock);
 
-	cv.wait(lg, std::forward<Predicate>(predicate), until);
+	cv.wait_until(lg, std::forward<Predicate>(predicate), until);
 	return lg;
 }
 
@@ -316,71 +332,6 @@ auto make_lock_when(SharedFutex &l, condition_variable &cv,
 					const std::chrono::duration<Rep, Period> &duration) noexcept {
 	const auto until = std::chrono::steady_clock::now() + duration;
 	return make_lock_when<lock_class, BackoffPolicy>(l, cv, std::forward<Predicate>(predicate), until);
-}
-
-/*
- *	@brief	Waits upon a condition variable, locks the futex in mode specified by lock_class and returns a lock_guard.
- *			See condition_variable::wait().
- */
-template <
-	shared_futex_lock_class lock_class,
-	typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy,
-	typename SharedFutex, typename Predicate,
-	typename Clock, typename Duration
->
-auto make_lock_when(cv_predicate_thread_safe_t,
-					SharedFutex &l, condition_variable &cv,
-					Predicate &&predicate,
-					const std::chrono::time_point<Clock, Duration> &until) noexcept {
-	static constexpr auto op = shared_futex_detail::op_for_class(lock_class);
-	lock_guard<
-		SharedFutex,
-		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, op>
-	> lg(l, std::defer_lock);
-
-	cv.wait(cv_predicate_thread_safe, lg, std::forward<Predicate>(predicate), until);
-	return lg;
-}
-
-/*
- *	@brief	Waits upon a condition variable, locks the futex in mode specified by lock_class and returns a lock_guard.
- *			See condition_variable::wait().
- */
-template <
-	shared_futex_lock_class lock_class,
-	typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy,
-	typename SharedFutex, typename Predicate
->
-auto make_lock_when(cv_predicate_thread_safe_t,
-					SharedFutex &l, condition_variable &cv,
-					Predicate &&predicate) noexcept {
-	return make_lock_when<lock_class, BackoffPolicy>(cv_predicate_thread_safe,
-													 l,
-													 cv,
-													 std::forward<Predicate>(predicate),
-													 std::chrono::steady_clock::time_point::max());
-}
-
-/*
- *	@brief	Waits upon a condition variable, locks the futex in mode specified by lock_class and returns a lock_guard.
- *			See condition_variable::wait().
- */
-template <
-	shared_futex_lock_class lock_class,
-	typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy,
-	typename SharedFutex, typename Predicate,
-	typename Rep, typename Period
->
-auto make_lock_when(cv_predicate_thread_safe_t,
-					SharedFutex &l, condition_variable &cv,
-					Predicate &&predicate,
-					const std::chrono::duration<Rep, Period> &duration) noexcept {
-	const auto until = std::chrono::steady_clock::now() + duration;
-	return make_lock_when<lock_class, BackoffPolicy>(cv_predicate_thread_safe,
-													 l,
-													 cv,
-													 std::forward<Predicate>(predicate),
-													 until);
 }
 
 }

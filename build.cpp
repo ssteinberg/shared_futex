@@ -4,6 +4,7 @@
 // Build test for shared_futex
 
 #include "shared_futex/shared_futex.hpp"
+#include "shared_futex/shared_futex_type_traits.hpp"
 #include "condition_variable/condition_variable.hpp"
 
 #include <atomic>
@@ -145,7 +146,7 @@ void compile_futex(F&& f) noexcept {
 		});
 
 		// Acquire lock when predicate is true
-		auto lg = make_lock_when<shared_futex_lock_class::exclusive>(f, cv, [&]() { return var.load(); });
+		auto lg = make_lock_when<shared_futex_lock_class::exclusive>(f, cv, [&]() noexcept -> bool { return var.load(); });
 		assert(lg);
 		signalling_thread.join();
 	}
@@ -155,8 +156,7 @@ void compile_futex(F&& f) noexcept {
 		for (auto &t : threads) {
 			t = std::thread([&]() {
 				// Wait upon cv and predicate with time-out
-				auto lg = make_lock_when<shared_futex_lock_class::shared>(cv_predicate_thread_safe, 
-																		  f, cv, [&]() { return var.load(); }, std::chrono::seconds(10));
+				auto lg = make_lock_when<shared_futex_lock_class::shared>(f, cv, [&]() noexcept -> bool { return var.load(); }, std::chrono::seconds(10));
 				assert(lg);
 			});
 		}
@@ -171,6 +171,26 @@ void compile_futex(F&& f) noexcept {
 		
 		for (auto &t : threads)
 			t.join();
+	}
+	{
+		// Wait upon a cv inside a critical section.
+		auto lg = make_exclusive_lock(f);
+		const auto wait_result = cv.wait(lg, []() noexcept -> bool { return true; });
+		// No waiting will be performed, predicate will be triggered.
+		assert(wait_result == parking_lot_wait_state::predicate);
+		// cv.wait() always acquires lock.
+		assert(lg);
+	}
+
+	// Type traits
+	{
+		auto l = make_exclusive_lock(f);
+		constexpr auto c = lock_class_v<decltype(l)>;
+		assert(c == shared_futex_lock_class::exclusive);
+
+		constexpr auto is_shared_futex = is_shared_futex_type_v<std::decay_t<F>>;
+		assert(is_shared_futex);
+		constexpr auto is_parkable = is_shared_futex_parkable_v<std::decay_t<F>>;
 	}
 }
 
