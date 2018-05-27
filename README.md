@@ -233,7 +233,7 @@ working with a `shared_futex`.
 
 ```C++
 condition_variable cv;
-// Wait upon cv given a predicate
+// Wait upon cv
 auto lg = make_lock_when<shared_futex_lock_class::exclusive>(f, cv);
 ```
 This will park until `cv` is signalled at which point the 
