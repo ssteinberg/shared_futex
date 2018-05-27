@@ -6,7 +6,15 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace ste::shared_futex_detail {
+namespace ste {
+
+enum class shared_futex_lock_class {
+	shared,
+	upgradeable,
+	exclusive
+};
+
+namespace shared_futex_detail {
 
 // Enables per-thread statistics collection
 // #define STE_SHARED_FUTEX_COLLECT_STATISTICS
@@ -80,6 +88,14 @@ enum class operation : std::uint8_t {
 	upgrade,
 };
 
+constexpr operation op_for_class(shared_futex_lock_class lock_class) noexcept {
+	return
+		lock_class == shared_futex_lock_class::shared ? operation::lock_shared :
+		lock_class == shared_futex_lock_class::upgradeable ? operation::lock_upgradeable :
+		operation::lock_exclusive;
+}
+
+
 // Backoff iteration type
 enum class backoff_operation : std::uint8_t {
 	spin,
@@ -107,7 +123,7 @@ enum class backoff_aggressiveness : std::uint8_t {
 
 // Acquisition type
 enum class acquisition_primality : std::uint8_t {
-	initial, 
+	initial,
 	waiter,
 };
 
@@ -137,4 +153,5 @@ enum class shared_futex_parking_policy {
 	shared_local
 };
 
+}
 }

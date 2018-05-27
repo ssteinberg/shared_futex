@@ -99,7 +99,7 @@ private:
 
 		// Check predicate under lock
 		if (park_predicate())
-			return parking_lot_wait_state::park_validation_failed;
+			return parking_lot_wait_state::predicate;
 
 		// Park
 		if (until != std::chrono::time_point<Clock, Duration>::max()) {
@@ -110,7 +110,7 @@ private:
 			cond_var.wait(ul);
 		}
 
-		return parking_lot_wait_state::signaled;
+		return parking_lot_wait_state::signalled;
 	}
 
 public:
