@@ -242,22 +242,22 @@ private:
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 5 :
-			aggressiveness == backoff_aggressiveness::normal ? 3 :
-			1;
+			aggressiveness == backoff_aggressiveness::aggressive ? 64 :
+			aggressiveness == backoff_aggressiveness::normal ? 32 :
+			16;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 2ull :
-			aggressiveness == backoff_aggressiveness::normal ? 2ull :
-			5ull;
+			aggressiveness == backoff_aggressiveness::aggressive ? 1ull :
+			aggressiveness == backoff_aggressiveness::normal ? 1ull :
+			2ull;
 	}
 	static std::size_t spin_symmetry_breaker(backoff_aggressiveness aggressiveness) noexcept {
 		// Will return a random count between 0 and max
 		const auto max = 
 			aggressiveness == backoff_aggressiveness::aggressive ? 5ull :
-			aggressiveness == backoff_aggressiveness::normal ? 7ull :
-			8ull;
+			aggressiveness == backoff_aggressiveness::normal ? 6ull :
+			10ull;
 
 		const auto rdtsc = __rdtsc();
 		return static_cast<std::size_t>(rdtsc % max);
