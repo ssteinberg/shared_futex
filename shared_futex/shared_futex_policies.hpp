@@ -1,5 +1,5 @@
 // shared_futex
-// � Shlomi Steinberg, 2015-2018
+// © Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -10,7 +10,11 @@
 #include <new>
 #include <tuple>
 #include <algorithm>
+#if defined(__GNUC__) || defined(__clang__)
+#include <x86intrin.h>
+#else
 #include <intrin.h>
+#endif
 
 namespace ste {
 
@@ -182,7 +186,7 @@ struct spinlock_backoff_policy {
 	template <shared_futex_detail::operation>
 	static constexpr std::size_t spin_count(std::size_t, float, backoff_aggressiveness) noexcept {
 		const auto rdtsc = __rdtsc();
-		return (rdtsc % 64) + 32;
+		return (rdtsc % 5) + 1;
 	}
 };
 
@@ -234,26 +238,26 @@ struct exponential_backoff_policy {
 
 private:
 	static constexpr std::size_t spins_on_last_iteration(backoff_aggressiveness aggressiveness) noexcept {
-		return 64ull;		// +64 pause instructions on last iteration, on the scale of ~200 nanoseconds.
+		return 5ull;		// +5 pause instructions on last iteration, on the scale of ~200 nanoseconds.
 	}
 	static constexpr std::size_t spin_iterations(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 64 :
-			aggressiveness == backoff_aggressiveness::normal ? 32 :
-			16;
+			aggressiveness == backoff_aggressiveness::aggressive ? 5 :
+			aggressiveness == backoff_aggressiveness::normal ? 3 :
+			1;
 	}
 	static constexpr std::size_t spin_base_count(backoff_aggressiveness aggressiveness) noexcept {
 		return
-			aggressiveness == backoff_aggressiveness::aggressive ? 32ull :
-			aggressiveness == backoff_aggressiveness::normal ? 48ull :
-			64ull;
+			aggressiveness == backoff_aggressiveness::aggressive ? 2ull :
+			aggressiveness == backoff_aggressiveness::normal ? 2ull :
+			5ull;
 	}
 	static std::size_t spin_symmetry_breaker(backoff_aggressiveness aggressiveness) noexcept {
 		// Will return a random count between 0 and max
 		const auto max = 
-			aggressiveness == backoff_aggressiveness::aggressive ? 64ull :
-			aggressiveness == backoff_aggressiveness::normal ? 80ull :
-			96ull;
+			aggressiveness == backoff_aggressiveness::aggressive ? 5ull :
+			aggressiveness == backoff_aggressiveness::normal ? 7ull :
+			8ull;
 
 		const auto rdtsc = __rdtsc();
 		return static_cast<std::size_t>(rdtsc % max);
