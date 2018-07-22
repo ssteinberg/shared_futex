@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// Â© Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -14,7 +14,11 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#if defined(__GNUC__) || defined(__clang__)
+#include <x86intrin.h>
+#else
 #include <intrin.h>
+#endif
 
 namespace ste::shared_futex_detail {
 
