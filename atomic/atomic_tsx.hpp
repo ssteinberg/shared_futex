@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <future>
 #include <cassert>
 
-namespace ste {
+namespace strt {
 
 namespace _atomic_tsx_detail {
 #if defined(_M_X64) || defined(__x86_64)
@@ -81,7 +81,7 @@ struct memory_order_helper {
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#define __atomic_tsx_force_inline attribute((always_inline))
+#define __atomic_tsx_force_inline inline
 static constexpr bool is_gcc = true;
 static constexpr bool is_msvc = false;
 #elif defined(_MSC_VER)

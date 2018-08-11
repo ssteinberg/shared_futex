@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -8,7 +8,7 @@
 
 #include <type_traits>
 
-namespace ste {
+namespace strt {
 
 // Checks if T is of a shared_futex type
 template <typename T>

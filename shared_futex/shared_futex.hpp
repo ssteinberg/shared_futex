@@ -1,12 +1,12 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "shared_futex_impl.hpp"
 #include "shared_futex_policies.hpp"
 
-namespace ste {
+namespace strt {
 
 /*
  *	@brief	Shared, upgradeable futex.

@@ -16,7 +16,7 @@
 #include <intrin.h>
 #endif
 
-namespace ste {
+namespace strt {
 
 /*
  *	Feature flags affecting shared_futex's global behaviour
@@ -46,7 +46,7 @@ struct shared_futex_default_policy {
 	 */
 
 	 // Futex alignment
-	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	static constexpr std::size_t alignment = 64;// std::hardware_destructive_interference_size;
 	// Latch data type
 	using latch_data_type = std::uint32_t;
 
@@ -121,7 +121,7 @@ struct shared_futex_micro_tsx_hle_policy {
  *	@brief	Policy with TSX HLE feature
  */
 struct shared_futex_tsx_hle_policy {
-	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	static constexpr std::size_t alignment = 64;// std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
 	static constexpr std::size_t shared_bits = 12;
@@ -137,7 +137,7 @@ struct shared_futex_tsx_hle_policy {
  *	@brief	Policy with TSX RTM feature
  */
 struct shared_futex_tsx_rtm_policy {
-	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	static constexpr std::size_t alignment = 64;// std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
 	static constexpr std::size_t shared_bits = 12;
@@ -153,7 +153,7 @@ struct shared_futex_tsx_rtm_policy {
  *	@brief	Policy with multi-slot feature
  */
 struct shared_futex_multi_slot_policy {
-	static constexpr std::size_t alignment = std::hardware_destructive_interference_size;
+	static constexpr std::size_t alignment = 64;// std::hardware_destructive_interference_size;
 	using latch_data_type = std::uint32_t;
 
 	static constexpr std::size_t shared_bits = 12;

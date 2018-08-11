@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -12,7 +12,7 @@
 #include <type_traits>
 #include <limits>
 
-namespace ste {
+namespace strt {
 
 class condition_variable {
 private:

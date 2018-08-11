@@ -1,12 +1,12 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include <cstdint>
 #include <cstddef>
 
-namespace ste {
+namespace strt {
 
 enum class shared_futex_lock_class {
 	shared,

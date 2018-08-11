@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <new>
 
-namespace ste::shared_futex_detail {
+namespace strt::shared_futex_detail {
 
 
 // Latch data storage.
@@ -23,7 +23,7 @@ struct latch_storage {
 	static constexpr auto count = slots;
 
 	struct slot_t {
-		static constexpr auto slot_alignment = std::hardware_destructive_interference_size;
+		static constexpr auto slot_alignment = 64;// std::hardware_destructive_interference_size;
 		alignas(slot_alignment) latch_type latch;
 		latch_type* operator->() noexcept { return &latch; }
 		const latch_type* operator->() const noexcept { return &latch; }

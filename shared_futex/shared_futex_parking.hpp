@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
@@ -9,7 +9,7 @@
 
 #include <type_traits>
 
-namespace ste::shared_futex_detail {
+namespace strt::shared_futex_detail {
 
 template <typename ParkSlot, shared_futex_parking_policy policy>
 class shared_futex_parking {

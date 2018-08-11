@@ -1,9 +1,7 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
-
-#include "../utils/hash_combine.hpp"
 
 #include <condition_variable>
 #include <mutex>
@@ -16,10 +14,11 @@
 #include <type_traits>
 #include <functional>
 #include <limits>
+#include <hash_combine.hpp>
 
 #include <cassert>
 
-namespace ste {
+namespace strt {
 
 enum class parking_lot_wait_state {
 	// Signaled and returned successfully
@@ -185,7 +184,7 @@ public:
 };
 
 class parking_lot_slot {
-	static constexpr auto alignment = std::hardware_destructive_interference_size;
+	static constexpr auto alignment = 64;// std::hardware_destructive_interference_size;
 
 public:
 	using mutex_t = std::mutex;
@@ -231,7 +230,7 @@ public:
 	template <typename UID, typename K>
 	static parking_lot_slot& slot_for(const UID &id, const K &key) noexcept {
 		auto x = std::hash<std::decay_t<K>>{}(key);
-		hash_combine<std::decay_t<UID>>{}(x, id);
+		x = hash_combine{}(x, id);
 
 		return slots[x % slots_count];
 	}

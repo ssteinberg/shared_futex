@@ -1,15 +1,19 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #pragma once
 
 #include "../atomic/atomic_tsx.hpp"
 
+#if defined(__GNUC__) || defined(__clang__)
+#include <x86intrin.h>
+#else
 #include <intrin.h>
+#endif
 #include <immintrin.h>
 #include <algorithm>
 
-namespace ste::utils {
+namespace strt::utils {
 
 /*
  *	@brief	Simple spin locker with a symmetry-breaking spin count modulation.

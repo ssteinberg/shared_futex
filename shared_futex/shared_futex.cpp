@@ -1,5 +1,5 @@
 // shared_futex
-// © Shlomi Steinberg, 2015-2018
+// ï¿½ Shlomi Steinberg, 2015-2018
 
 #include "shared_futex.hpp"
 
@@ -7,7 +7,7 @@
 #include <chrono>
 #include <functional>
 
-using namespace ste;
+using namespace strt;
 
 inline std::mt19937 generate_seeded_random_engine() noexcept {
 	const auto tse = std::chrono::high_resolution_clock::now().time_since_epoch();

@@ -16,7 +16,7 @@
 #include <cassert>
 #include <immintrin.h>
 
-namespace ste {
+namespace strt {
 
 
 // Force inlining key methods generates slightly better output.
@@ -24,7 +24,7 @@ namespace ste {
 #error Macro already in use
 #endif
 #if defined(__GNUC__) || defined(__clang__)
-#define __shared_futex_force_inline attribute((always_inline))
+#define __shared_futex_force_inline inline
 #elif defined(_MSC_VER)
 #define __shared_futex_force_inline __forceinline
 #else
@@ -323,8 +323,8 @@ private:
 template <typename Latch, typename BackoffPolicy, typename ProtocolPolicy, operation op>
 class shared_futex_locking_protocol {
 	using futex_policy = typename Latch::futex_policy;
-	using latch_descriptor = typename Latch::latch_descriptor;
-	using waiters_descriptor = typename Latch::waiters_descriptor;
+	using latch_descriptor_t = typename Latch::latch_descriptor_t;
+	using waiters_descriptor_t = typename Latch::waiters_descriptor_t;
 
 public:
 	static constexpr operation locking_protocol_operation = op;
@@ -342,7 +342,7 @@ private:
 protected:
 	// Checks if a latch value is valid for lock acquisition
 	template <acquisition_primality primality, operation op_to_check = op>
-	static bool can_acquire_lock(const latch_descriptor &latch_value) noexcept {
+	static bool can_acquire_lock(const latch_descriptor_t &latch_value) noexcept {
 		const auto exclusive_holders = latch_value.template consumers<operation::lock_exclusive>();
 		const auto upgradeable_holders = latch_value.template consumers<operation::lock_upgradeable>();
 		const auto shared_holders = latch_value.template consumers<operation::lock_shared>();
@@ -384,7 +384,7 @@ protected:
 	}
 	
 	// Handles unparking of shared and upgradeable parked waiters.
-	static std::size_t unpark_shared_if_needed(Latch &l, const latch_availability_hint hint, const waiters_descriptor &waiters_value) noexcept {
+	static std::size_t unpark_shared_if_needed(Latch &l, const latch_availability_hint hint, const waiters_descriptor_t &waiters_value) noexcept {
 		// Check if shared can even be unparked
 		if constexpr (op == operation::lock_shared) {
 			// No need to unpark if latch is in shared mode (there can not be any shared waiters)

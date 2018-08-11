@@ -7,12 +7,11 @@
 #include "shared_futex_parking.hpp"
 #include "shared_futex_latch_storage.hpp"
 #include "../atomic/atomic_tsx.hpp"
-#include "../utils/tuple_has_type.hpp"
-#include "../arithmetic/ceil_power_of_two.hpp"
 
 #include <cassert>
 #include <tuple>
 #include <type_traits>
+#include <tuple_has_type.hpp>
 #include <utility>
 #if defined(__GNUC__) || defined(__clang__)
 #include <x86intrin.h>
@@ -20,12 +19,14 @@
 #include <intrin.h>
 #endif
 
-namespace ste::shared_futex_detail {
+#include <glm/gtc/round.hpp>
+
+namespace strt::shared_futex_detail {
 
 struct features_helper {
 	template <typename SupportedFeaturesTuple, typename... RequestedFeatures>
 	static constexpr bool check_supports_all(const std::tuple<RequestedFeatures...> &requested_features) noexcept {
-		return std::conjunction_v<utils::tuple_has_type<RequestedFeatures, SupportedFeaturesTuple>...>;
+		return std::conjunction_v<tuple_has_type<RequestedFeatures, SupportedFeaturesTuple>...>;
 	}
 	template <typename Feature, typename... RequestedFeatures>
 	static constexpr bool requires_feature(const std::tuple<RequestedFeatures...> &requested_features) noexcept {
@@ -60,13 +61,13 @@ public:
 	>;
 	
 private:
-	static_assert(features_helper::check_supports_all<supported_features>(futex_policy::features{}), 
+	static_assert(features_helper::check_supports_all<supported_features>(typename futex_policy::features{}), 
 				  "futex_policy::features contains unsupported features, see supported_features.");
 
 	// Checks if the futex's Features list contains Feature
 	template <typename Feature>
 	static constexpr bool requires_feature() noexcept {
-		return features_helper::requires_feature<Feature>(futex_policy::features{});
+		return features_helper::requires_feature<Feature>(typename futex_policy::features{});
 	}
 
 public:
@@ -158,8 +159,8 @@ public:
 		waiters_descriptor_size <= 4, std::int32_t, std::int64_t
 	>>>;
 	
-	using latch_descriptor = latch_descriptor<latch_data_type, parking_policy>;
-	using waiters_descriptor = waiters_descriptor<
+	using latch_descriptor_t = latch_descriptor<latch_data_type, parking_policy>;
+	using waiters_descriptor_t = waiters_descriptor<
 		waiters_counter_type,
 		futex_policy::shared_bits, futex_policy::upgradeable_bits, futex_policy::exclusive_bits,
 		count_waiters
@@ -173,9 +174,9 @@ private:
 	using latch_atomic_t = atomic_tsx<latch_data_type>;
 	using waiters_atomic_t = atomic_tsx<waiters_counter_type>;
 
-	static_assert(sizeof(latch_descriptor) <= sizeof(latch_data_type), "latch_data_type too small to contain latch_descriptor");
-	static_assert(sizeof(waiters_descriptor) <= sizeof(waiters_counter_type), "waiters_counter_type too small to contain waiters_descriptor");
-	static_assert(latch_descriptor::shared_consumers_bits >= futex_policy::shared_bits, "Shared consumers bit count can not satisfy requested shared_bits bit count.");
+	static_assert(sizeof(latch_descriptor_t) <= sizeof(latch_data_type), "latch_data_type too small to contain latch_descriptor_t");
+	static_assert(sizeof(waiters_descriptor_t) <= sizeof(waiters_counter_type), "waiters_counter_type too small to contain waiters_descriptor_t");
+	static_assert(latch_descriptor_t::shared_consumers_bits >= futex_policy::shared_bits, "Shared consumers bit count can not satisfy requested shared_bits bit count.");
 	
 	static_assert(latch_atomic_t::is_always_lock_free, "Latch is not lock-free!");
 	static_assert(waiters_atomic_t::is_always_lock_free, "Latch waiter counter is not lock-free!");
@@ -188,7 +189,7 @@ private:
 	>;
 	
 	using latch_data_t = latch_data<latch_storage_t, parking_lot_t, parking_allowed>;
-	static constexpr auto alignment = ceil_power_of_two(std::max(futex_policy::alignment, sizeof(latch_data_t)));
+	static constexpr auto alignment = glm::ceilPowerOfTwo(std::max(futex_policy::alignment, sizeof(latch_data_t)));
 
 private:
 	// Latch storage
@@ -197,10 +198,10 @@ private:
 private:
 	// Specifies the initial state the latch is assumed to be at.
 	template <operation op>
-	static constexpr latch_descriptor singular_latch_state_for_mo() noexcept {
+	static constexpr latch_descriptor_t singular_latch_state_for_mo() noexcept {
 		if constexpr (op == operation::upgrade) {
 			// The locker already holds an upgradeable lock
-			return latch_descriptor::template make_locked<operation::lock_upgradeable>();
+			return latch_descriptor_t::template make_locked<operation::lock_upgradeable>();
 		}
 
 		// Clean latch otherwise
@@ -303,7 +304,7 @@ private:
 		if constexpr (method == latch_acquisition_method::counter ||
 					  method == latch_acquisition_method::cxhg) {
 			auto expected = static_cast<latch_data_type>(singular_latch_state_for_mo<op>());
-			auto desired_latch = latch_descriptor::template make_locked<op>();
+			auto desired_latch = latch_descriptor_t::template make_locked<op>();
 						  
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
@@ -321,8 +322,8 @@ private:
 			}
 
 			// Otherwise keep trying to write desired/increase counter while previous latch value is valid for acquisition
-			while (validator(latch_descriptor{ expected })) {
-				desired_latch = latch_descriptor{ expected };
+			while (validator(latch_descriptor_t{ expected })) {
+				desired_latch = latch_descriptor_t{ expected };
 				desired_latch.set_lock_held_flag();
 				desired_latch.template inc_consumers<op>(1);
 
@@ -338,7 +339,7 @@ private:
 				++debug_statistics.lock_rmw_instructions;
 
 			// Bit-test-and-set
-			const auto bit = latch_descriptor::lock_held_bit_index;
+			const auto bit = latch_descriptor_t::lock_held_bit_index;
 			if constexpr (tsx_hle_exclusive && primality == acquisition_primality::initial) {
 				// xacquire for transactional hardware-lock-elision
 				if (!data.latch[slot]->bit_test_and_set(bit, memory_order::xacquire))
@@ -421,7 +422,7 @@ private:
 			if (s == primary_slot)
 				continue;
 			const auto latch_value = data.latch[s]->load(acquire_order);
-			if (!validator(latch_descriptor{ latch_value })) {
+			if (!validator(latch_descriptor_t{ latch_value })) {
 				success = false;
 				break;
 			}
@@ -490,8 +491,8 @@ private:
 		const auto load_order = memory_order_load(order);
 
 		// Calculate some latch bits
-		latch_descriptor desired_latch = {};
-		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor::template make_single_consumer<op>());
+		latch_descriptor_t desired_latch = {};
+		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor_t::template make_single_consumer<op>());
 		
 		if constexpr (method == latch_acquisition_method::counter) {
 			// Counter: Atomically decrement counter.
@@ -499,7 +500,7 @@ private:
 				++debug_statistics.lock_rmw_instructions;
 
 			const latch_data_type new_val = data.latch[slot]->fetch_add(-single_consumer_bits, memory_order::acq_rel) - single_consumer_bits;
-			if (latch_descriptor{ new_val } == latch_descriptor::make_exclusive_locked()) {
+			if (latch_descriptor_t{ new_val } == latch_descriptor_t::make_exclusive_locked()) {
 				// Counter decreased to 0, release latch.
 				data.latch[slot]->store(static_cast<latch_data_type>(desired_latch), store_order);
 				return latch_availability_hint::free;
@@ -516,14 +517,14 @@ private:
 					++debug_statistics.lock_rmw_instructions;
 
 				// Calculate new desired value
-				desired_latch = latch_descriptor{ expected - single_consumer_bits };
+				desired_latch = latch_descriptor_t{ expected - single_consumer_bits };
 				// Clear lock held flag, if needed.
-				if (desired_latch == latch_descriptor::make_exclusive_locked())
+				if (desired_latch == latch_descriptor_t::make_exclusive_locked())
 					desired_latch = {};
 			} while (!data.latch[slot]->compare_exchange_weak(expected, static_cast<latch_data_type>(desired_latch), order));
 
 			// Return hint based on the final latch value cxhg-ed in.
-			if (desired_latch == latch_descriptor{})
+			if (desired_latch == latch_descriptor_t{})
 				return latch_availability_hint::free;
 			return latch_availability_hint::shared;
 		}
@@ -564,32 +565,32 @@ public:
 	shared_futex_default_latch &operator=(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch &operator=(const shared_futex_default_latch&) = delete;
 
-	latch_descriptor load(memory_order order = memory_order::acquire) const noexcept {
+	latch_descriptor_t load(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (collect_statistics) {
 			if (order != memory_order::relaxed)
 				++debug_statistics.lock_atomic_loads;
 		}
 
-		return latch_descriptor{ data.latch[primary_slot]->load(order) };
+		return latch_descriptor_t{ data.latch[primary_slot]->load(order) };
 	}
-	waiters_descriptor load_waiters_counters(memory_order order = memory_order::acquire) const noexcept {
+	waiters_descriptor_t load_waiters_counters(memory_order order = memory_order::acquire) const noexcept {
 		if constexpr (has_waiters_counter) {
 			if constexpr (collect_statistics) {
 				if (order != memory_order::relaxed)
 					++debug_statistics.lock_atomic_loads;
 			}
 
-			return waiters_descriptor{ data.latch.waiters.load(order) };
+			return waiters_descriptor_t{ data.latch.waiters.load(order) };
 		}
 
 		// Return empty waiters descriptor if we are not counting waiters
-		return waiters_descriptor{};
+		return waiters_descriptor_t{};
 	}
 	
 	/*
 	 *	@brief	Attempts to acquire lock.
 	 *	
-	 *	@param	validator	A closure that takes a latch_descriptor and returns true iff the latch at that state is valid for lock acquisition.
+	 *	@param	validator	A closure that takes a latch_descriptor_t and returns true iff the latch at that state is valid for lock acquisition.
 	 *	
 	 *	@return	Returns a pair of a boolean indicating whether the acquisition was successful and, on successful acquisitions, a lock object
 	 *			that should be consumed when unlocking by a call to release().
@@ -607,7 +608,7 @@ public:
 	 *	
 	 *	@param	lock		Upgradeable lock to upgrade. If acquisition is successful the lock is consumed and an exclusive lock is returned,
 	 *						otherwise the lock is untouched.
-	 *	@param	validator	A closure that takes a latch_descriptor and returns true iff the latch at that state is valid for lock upgrade.
+	 *	@param	validator	A closure that takes a latch_descriptor_t and returns true iff the latch at that state is valid for lock upgrade.
 	 *	
 	 *	@return	Returns a pair of a boolean indicating whether the acquisition was successful and, on successful acquisitions, a lock object
 	 *			that should be consumed when unlocking by a call to release().
@@ -713,12 +714,12 @@ public:
 
 		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
-			return data.parking_lot.unpark<tactic, op>();
+			return data.parking_lot.template unpark<tactic, op>();
 		}
 		else if constexpr (parking_allowed) {
 			// Generate parking key and attempt unpark
 			auto unpark_key = parking_lot_parking_key<op>();
-			return data.parking_lot.unpark<tactic, op>(std::move(unpark_key));
+			return data.parking_lot.template unpark<tactic, op>(std::move(unpark_key));
 		}
 
 		return {};
@@ -731,7 +732,7 @@ public:
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor d = {};
+			waiters_descriptor_t d = {};
 			d.template inc_waiters<op>(1);
 			const auto bits = static_cast<waiters_counter_type>(d);
 			data.latch.waiters.fetch_add(bits, order);
@@ -744,7 +745,7 @@ public:
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor d = {};
+			waiters_descriptor_t d = {};
 			d.template inc_waiters<op>(1);
 			const auto bits = -static_cast<waiters_counter_type>(d);
 			data.latch.waiters.fetch_add(bits, order);
@@ -760,7 +761,7 @@ public:
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor dp = {};
+			waiters_descriptor_t dp = {};
 			dp.template inc_parked<op>(1);
 			const auto bits = +static_cast<waiters_counter_type>(dp);
 
@@ -779,7 +780,7 @@ public:
 			if constexpr (collect_statistics)
 				++debug_statistics.lock_rmw_instructions;
 
-			waiters_descriptor d = {};
+			waiters_descriptor_t d = {};
 			d.template inc_parked<op>(count);
 			const auto bits = -static_cast<waiters_counter_type>(d);
 			
@@ -798,13 +799,13 @@ public:
 
 			waiters_counter_type bits = 0;
 			if constexpr (should_count_parked<op>()) {
-				waiters_descriptor dp = {};
+				waiters_descriptor_t dp = {};
 				dp.template inc_parked<op>(1);
 				bits += static_cast<waiters_counter_type>(dp);
 			}
 			if constexpr (should_count_waiters<op>()) {
 				// Remove wait bit
-				waiters_descriptor dw = {};
+				waiters_descriptor_t dw = {};
 				dw.template inc_waiters<op>(1);
 				bits -= static_cast<waiters_counter_type>(dw);
 			}
@@ -824,13 +825,13 @@ public:
 
 			waiters_counter_type bits = 0;
 			if constexpr (should_count_parked<op>()) {
-				waiters_descriptor dp = {};
+				waiters_descriptor_t dp = {};
 				dp.template inc_parked<op>(1);
 				bits -= static_cast<waiters_counter_type>(dp);
 			}
 			if constexpr (should_count_waiters<op>()) {
 				// Add wait bit
-				waiters_descriptor dw = {};
+				waiters_descriptor_t dw = {};
 				dw.template inc_waiters<op>(1);
 				bits += static_cast<waiters_counter_type>(dw);
 			}
