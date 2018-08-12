@@ -340,7 +340,7 @@ template <typename T> inline constexpr shared_futex_lock_class lock_class_v;
 Hardware lock elision is performed via the Transactional Synchronization Extensions (TSX)
 on modern x86-64 architectures.
 (For more information on TSX, see 
-[Intel® 64 and IA-32 Architectures Software Developer’s Manual, Volume 1](https://www.intel.com/content/www/us/en/architecture-and-technology/64-ia-32-architectures-software-developer-vol-1-manual.html).)
+[Intelï¿½ 64 and IA-32 Architectures Software Developerï¿½s Manual, Volume 1](https://www.intel.com/content/www/us/en/architecture-and-technology/64-ia-32-architectures-software-developer-vol-1-manual.html).)
 
 
 The `shared_futex*_hle` variants use the *`xacquire`*/*`xrelease`* x86
@@ -366,51 +366,3 @@ backward compatible. It is the users responsibility to ensure
 their target system supports TSX RTM. Transactions can be 
 explictly aborted inside a critical section falling back to 
 non-elided lock acquisition. See `transactional_memory` namespace.
-
-#### Performance
-
-Performance is still work-in-progress and results are perliminary.
-
-Tests: _N_ threads which perform _M_ iterations of acquiring a mutex in either 
-exclusive mode and inserting/deleting (alternating) a random 
-element from a sorted `std::vector` of size _S_ or shared 
-mode and reading a consecutive segment starting at random from 
-the vector. Exclusive-to-shared ratio is denoted _X_. All
-times are in milliseconds and are total CPU time across all
-threads. <br/>
-All test were run on an Intel® Core™ i7-6770HQ 
-processor (8 logical threads).
-
-###### Overhead (_N_ = 1, _S_ = 1, _M_ = 10M)
-
-![](images/overhead.png)
-
-
-###### Exclusive  access
-
-_M_ = 10M
-![](images/8_1.0.png)
-
-_M_ = 4M
-![](images/128_1.0.png)
-
-_M_ = 2M
-![](images/1024_1.0.png)
-
-_M_ = 500k
-![](images/10k_1.0.png)
-
-
-###### Mixed  access
-
-_M_ = 10M
-![](images/8_0.2.png)
-
-_M_ = 10M
-![](images/8_0.1.png)
-
-
-###### Concurrent variant
-
-_M_ = 5M
-![](images/1024_8t.png)
