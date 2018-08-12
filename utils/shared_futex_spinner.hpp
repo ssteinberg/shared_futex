@@ -13,7 +13,7 @@
 #include <immintrin.h>
 #include <algorithm>
 
-namespace strt::utils {
+namespace strt::shared_futex_utils {
 
 /*
  *	@brief	Simple spin locker with a symmetry-breaking spin count modulation.
@@ -38,8 +38,8 @@ public:
 		do {
 			// Spin
 			const auto rdtsc = __rdtsc();
-			const auto spins = static_cast<std::size_t>(rdtsc % symmetry_breaker) + base_spins;
-			for (auto j=0; j<spins; ++j)
+			const auto spins = static_cast<size_t>(rdtsc % symmetry_breaker) + base_spins;
+			for (size_t j=0; j<spins; ++j)
 				::_mm_pause();
 		} while (!try_lock());
 	}

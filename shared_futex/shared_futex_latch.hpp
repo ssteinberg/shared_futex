@@ -189,7 +189,7 @@ private:
 	>;
 	
 	using latch_data_t = latch_data<latch_storage_t, parking_lot_t, parking_allowed>;
-	static constexpr auto alignment = glm::ceilPowerOfTwo(std::max(futex_policy::alignment, sizeof(latch_data_t)));
+	static constexpr auto alignment = std::max(futex_policy::alignment, alignof(latch_data_t));
 
 private:
 	// Latch storage
@@ -487,12 +487,12 @@ private:
 	template <operation op>
 	latch_availability_hint release_internal_slot(slot_type slot, lock_status mode, memory_order order) noexcept {
 		static constexpr auto method = acquisition_method_for_mo<op>();
-		const auto store_order = memory_order_store(order);
-		const auto load_order = memory_order_load(order);
+		[[maybe_unused]] const auto store_order = memory_order_store(order);
+		[[maybe_unused]] const auto load_order = memory_order_load(order);
 
 		// Calculate some latch bits
 		latch_descriptor_t desired_latch = {};
-		const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor_t::template make_single_consumer<op>());
+		[[maybe_unused]] const auto single_consumer_bits = static_cast<latch_data_type>(latch_descriptor_t::template make_single_consumer<op>());
 		
 		if constexpr (method == latch_acquisition_method::counter) {
 			// Counter: Atomically decrement counter.
@@ -559,7 +559,7 @@ private:
 	}
 
 public:
-	constexpr shared_futex_default_latch() noexcept = default;
+	constexpr shared_futex_default_latch() noexcept {}
 	shared_futex_default_latch(shared_futex_default_latch&&) = delete;
 	shared_futex_default_latch(const shared_futex_default_latch&) = delete;
 	shared_futex_default_latch &operator=(shared_futex_default_latch&&) = delete;
@@ -684,19 +684,19 @@ public:
 		if constexpr (op == operation::lock_shared &&
 					  futex_policy::parking_policy == shared_futex_parking_policy::shared_local) {
 			// Park shared in local slot
-			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-												   std::forward<OnPark>(on_park),
-												   std::forward<PostPark>(post_park),
-												   until);
+			return data.parking_lot.template park_until<op>(std::forward<ParkPredicate>(park_predicate),
+															std::forward<OnPark>(on_park),
+															std::forward<PostPark>(post_park),
+															until);
 		}
 		else if constexpr (parking_allowed) {
 			// Wait
 			auto key = parking_lot_parking_key<op>();
-			return data.parking_lot.park_until<op>(std::forward<ParkPredicate>(park_predicate),
-												   std::forward<OnPark>(on_park),
-												   std::forward<PostPark>(post_park),
-												   std::move(key),
-												   until);
+			return data.parking_lot.template park_until<op>(std::forward<ParkPredicate>(park_predicate),
+															std::forward<OnPark>(on_park),
+															std::forward<PostPark>(post_park),
+															std::move(key),
+															until);
 		}
 
 		return parking_lot_wait_state::signalled;

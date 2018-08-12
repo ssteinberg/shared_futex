@@ -343,9 +343,9 @@ protected:
 	// Checks if a latch value is valid for lock acquisition
 	template <acquisition_primality primality, operation op_to_check = op>
 	static bool can_acquire_lock(const latch_descriptor_t &latch_value) noexcept {
-		const auto exclusive_holders = latch_value.template consumers<operation::lock_exclusive>();
-		const auto upgradeable_holders = latch_value.template consumers<operation::lock_upgradeable>();
-		const auto shared_holders = latch_value.template consumers<operation::lock_shared>();
+		[[maybe_unused]] const auto exclusive_holders = latch_value.template consumers<operation::lock_exclusive>();
+		[[maybe_unused]] const auto upgradeable_holders = latch_value.template consumers<operation::lock_upgradeable>();
+		[[maybe_unused]] const auto shared_holders = latch_value.template consumers<operation::lock_shared>();
 
 		if constexpr (op_to_check == operation::lock_shared) {
 			// Shared waiters are permitted iff there are no exclusive holders

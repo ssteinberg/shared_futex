@@ -5,7 +5,7 @@
 
 #include "shared_futex_common.hpp"
 #include "../parking_lot/parking_lot.hpp"
-#include "../utils/spinner.hpp"
+#include "../utils/shared_futex_spinner.hpp"
 
 #include <type_traits>
 
@@ -78,7 +78,7 @@ public:
 
 private:
 	// Local slot for shared
-	using mutex_t = utils::spinner<>;
+	using mutex_t = shared_futex_utils::spinner<>;
 	std::condition_variable_any shared_cond_var;
 	mutex_t shared_cond_var_lock;
 

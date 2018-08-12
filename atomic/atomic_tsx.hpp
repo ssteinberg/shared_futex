@@ -204,7 +204,7 @@ private:
 			}
 		}
 		else if constexpr (_atomic_tsx_detail::is_gcc) {
-			return memory_order::xacquire ?
+			return success == memory_order::xacquire ?
 				__atomic_compare_exchange_n(dst, &expected, desired, weak, __ATOMIC_ACQUIRE | __ATOMIC_HLE_ACQUIRE, __ATOMIC_ACQUIRE) :
 				__atomic_compare_exchange_n(dst, &expected, desired, weak, __ATOMIC_RELEASE | __ATOMIC_HLE_RELEASE, __ATOMIC_RELAXED);
 		}

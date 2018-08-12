@@ -99,6 +99,7 @@ class latch_descriptor {
 	using counter_t = std::make_unsigned_t<T>;
 	using storage_t = latch_descriptor_storage<counter_t, T, compact, parking_policy>;
 
+public:
 	static constexpr auto lock_held_bit_index = 0;
 	static constexpr auto shared_consumers_bits = storage_t::shared_consumers_bits;
 
