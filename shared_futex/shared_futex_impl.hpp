@@ -736,15 +736,29 @@ thread_local random_generator shared_futex_locking_protocol<Latch, BackoffPolicy
 }
 
 
+template <typename SharedFutex, typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy>
+using exclusive_lock = lock_guard<
+	SharedFutex, 
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
+>;
+template <typename SharedFutex, typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy>
+using shared_lock = lock_guard<
+	SharedFutex, 
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_shared>
+>;
+template <typename SharedFutex, typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy>
+using upgradeable_lock = lock_guard<
+	SharedFutex, 
+	shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_upgradeable>
+>;
+
+
 /*
  *	@brief	Locks the futex in shared mode and returns a lock_guard.
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 auto make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
-	return lock_guard<
-		SharedFutex, 
-		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_shared>
-	>(l, std::forward<Args>(args)...);
+	return shared_lock<SharedFutex, BackoffPolicy>(l, std::forward<Args>(args)...);
 }
 
 /*
@@ -752,10 +766,7 @@ auto make_shared_lock(SharedFutex &l, Args &&... args) noexcept {
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 auto make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
-	return lock_guard<
-		SharedFutex, 
-		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_upgradeable>
-	>(l, std::forward<Args>(args)...);
+	return upgradeable_lock<SharedFutex, BackoffPolicy>(l, std::forward<Args>(args)...);
 }
 
 /*
@@ -763,10 +774,7 @@ auto make_upgradeable_lock(SharedFutex &l, Args &&... args) noexcept {
  */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename... Args>
 auto make_exclusive_lock(SharedFutex &l, Args &&... args) noexcept {
-	return lock_guard<
-		SharedFutex, 
-		shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, shared_futex_policies::shared_futex_protocol_policy, shared_futex_detail::operation::lock_exclusive>
-	>(l, std::forward<Args>(args)...);
+	return exclusive_lock<SharedFutex, BackoffPolicy>(l, std::forward<Args>(args)...);
 }
 
 /*
@@ -820,7 +828,7 @@ auto upgrade_lock(lock_guard<SharedFutex, shared_futex_detail::shared_futex_lock
 */
 template <typename BackoffPolicy = shared_futex_policies::exponential_backoff_policy, typename SharedFutex, typename P, typename B, typename Clock, typename Duration>
 auto try_upgrade_lock_until(lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, B, P, shared_futex_detail::operation::lock_upgradeable>> &&upgradeable_guard, const std::chrono::time_point<Clock, Duration> &until) noexcept {
-	using exclusive_lock_guard = lock_guard<SharedFutex, shared_futex_detail::shared_futex_locking_protocol<typename SharedFutex::latch_type, BackoffPolicy, P, shared_futex_detail::operation::lock_exclusive>>;
+	using exclusive_lock_guard = exclusive_lock<SharedFutex, BackoffPolicy>;
 
 	// Upgradeable guard owns lock?
 	assert(upgradeable_guard.owns_lock());
